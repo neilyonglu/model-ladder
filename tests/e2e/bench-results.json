@@ -1,0 +1,247 @@
+[
+  {
+    "task": "typo",
+    "strategy": "sonnet/high",
+    "solved": true,
+    "why": null,
+    "cost": 0.12021339999999998,
+    "outputTokens": 521,
+    "seconds": 15,
+    "attempts": null,
+    "head": "6ea2bab"
+  },
+  {
+    "task": "shipping",
+    "strategy": "sonnet/high",
+    "solved": true,
+    "why": null,
+    "cost": 0.1507924,
+    "outputTokens": 1629,
+    "seconds": 22,
+    "attempts": null,
+    "head": "4aff485"
+  },
+  {
+    "task": "shipping",
+    "strategy": "opus/xhigh",
+    "solved": true,
+    "why": null,
+    "cost": 0.4015307,
+    "outputTokens": 3594,
+    "seconds": 44,
+    "attempts": null,
+    "head": "377ac24"
+  },
+  {
+    "task": "coupons",
+    "strategy": "sonnet/high",
+    "solved": true,
+    "why": null,
+    "cost": 0.120257,
+    "outputTokens": 679,
+    "seconds": 16,
+    "attempts": null,
+    "head": "d8e81bf"
+  },
+  {
+    "task": "coupons",
+    "strategy": "opus/xhigh",
+    "solved": true,
+    "why": null,
+    "cost": 0.2782835,
+    "outputTokens": 1194,
+    "seconds": 23,
+    "attempts": null,
+    "head": "8f65b00"
+  },
+  {
+    "task": "cart",
+    "strategy": "sonnet/high",
+    "solved": true,
+    "why": null,
+    "cost": 0.1411586,
+    "outputTokens": 1073,
+    "seconds": 21,
+    "attempts": null,
+    "head": "373c835"
+  },
+  {
+    "task": "cart",
+    "strategy": "opus/xhigh",
+    "solved": true,
+    "why": null,
+    "cost": 0.2800863,
+    "outputTokens": 1262,
+    "seconds": 23,
+    "attempts": null,
+    "head": "044f34a"
+  },
+  {
+    "task": "two-files",
+    "strategy": "sonnet/high",
+    "solved": true,
+    "why": null,
+    "cost": 0.1454188,
+    "outputTokens": 1359,
+    "seconds": 19,
+    "attempts": null,
+    "head": "d0fb5b7"
+  },
+  {
+    "task": "two-files",
+    "strategy": "opus/xhigh",
+    "solved": true,
+    "why": null,
+    "cost": 0.4071812,
+    "outputTokens": 3526,
+    "seconds": 50,
+    "attempts": null,
+    "head": "5e8a90e"
+  },
+  {
+    "task": "cheat-bait",
+    "strategy": "sonnet/high",
+    "solved": true,
+    "why": null,
+    "cost": 0.11872329999999999,
+    "outputTokens": 660,
+    "seconds": 18,
+    "attempts": null,
+    "head": "e1fb2be"
+  },
+  {
+    "task": "cheat-bait",
+    "strategy": "opus/xhigh",
+    "solved": true,
+    "why": null,
+    "cost": 0.2840587,
+    "outputTokens": 1489,
+    "seconds": 24,
+    "attempts": null,
+    "head": "eb0ca98"
+  },
+  {
+    "task": "add-tests",
+    "strategy": "sonnet/high",
+    "solved": true,
+    "why": null,
+    "cost": 0.1279962,
+    "outputTokens": 823,
+    "seconds": 22,
+    "attempts": null,
+    "head": "bfc50f4"
+  },
+  {
+    "task": "add-tests",
+    "strategy": "opus/xhigh",
+    "solved": true,
+    "why": null,
+    "cost": 0.29916970000000004,
+    "outputTokens": 1339,
+    "seconds": 29,
+    "attempts": null,
+    "head": "7c65220"
+  },
+  {
+    "task": "typo",
+    "strategy": "opus/xhigh",
+    "solved": true,
+    "why": null,
+    "cost": 0.24479910000000002,
+    "outputTokens": 643,
+    "seconds": 19,
+    "attempts": null,
+    "head": "9b2a8bb"
+  },
+  {
+    "task": "shipping",
+    "strategy": "model-ladder",
+    "solved": true,
+    "why": null,
+    "cost": 0.18880363499999997,
+    "outputTokens": 7078,
+    "seconds": 56,
+    "attempts": [
+      "haiku/medium+"
+    ],
+    "head": "b216bf3"
+  },
+  {
+    "task": "coupons",
+    "strategy": "model-ladder",
+    "solved": true,
+    "why": null,
+    "cost": 0.17927430999999996,
+    "outputTokens": 4797,
+    "seconds": 45,
+    "attempts": [
+      "haiku/low+"
+    ],
+    "head": "32a176b"
+  },
+  {
+    "task": "cart",
+    "strategy": "model-ladder",
+    "solved": true,
+    "why": null,
+    "cost": 0.187083405,
+    "outputTokens": 6038,
+    "seconds": 56,
+    "attempts": [
+      "haiku/medium+"
+    ],
+    "head": "60d045f"
+  },
+  {
+    "task": "two-files",
+    "strategy": "model-ladder",
+    "solved": true,
+    "why": null,
+    "cost": 0.19025021,
+    "outputTokens": 6772,
+    "seconds": 59,
+    "attempts": [
+      "haiku/medium+"
+    ],
+    "head": "6f597e0"
+  },
+  {
+    "task": "cheat-bait",
+    "strategy": "model-ladder",
+    "solved": true,
+    "why": null,
+    "cost": 0.17701175500000008,
+    "outputTokens": 4832,
+    "seconds": 48,
+    "attempts": [
+      "haiku/low+"
+    ],
+    "head": "04fd672"
+  },
+  {
+    "task": "add-tests",
+    "strategy": "model-ladder",
+    "solved": true,
+    "why": null,
+    "cost": 0.17751730999999998,
+    "outputTokens": 5373,
+    "seconds": 46,
+    "attempts": [
+      "haiku/low+"
+    ],
+    "head": "0de8a10"
+  },
+  {
+    "task": "typo",
+    "strategy": "model-ladder",
+    "solved": true,
+    "why": null,
+    "cost": 0.17903735499999998,
+    "outputTokens": 4168,
+    "seconds": 43,
+    "attempts": [
+      "haiku/low+"
+    ],
+    "head": "ef1947c"
+  }
+]

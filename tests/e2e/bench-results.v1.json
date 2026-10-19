@@ -1,0 +1,248 @@
+[
+  {
+    "task": "typo",
+    "strategy": "model-ladder",
+    "solved": true,
+    "why": null,
+    "cost": 0.26917971999999996,
+    "outputTokens": 4921,
+    "seconds": 54,
+    "attempts": [
+      "haiku/low+"
+    ],
+    "head": "6a60c8b"
+  },
+  {
+    "task": "typo",
+    "strategy": "sonnet/high",
+    "solved": true,
+    "why": null,
+    "cost": 0.12021339999999998,
+    "outputTokens": 521,
+    "seconds": 15,
+    "attempts": null,
+    "head": "6ea2bab"
+  },
+  {
+    "task": "shipping",
+    "strategy": "model-ladder",
+    "solved": true,
+    "why": null,
+    "cost": 0.27160254999999994,
+    "outputTokens": 7077,
+    "seconds": 69,
+    "attempts": [
+      "haiku/medium+"
+    ],
+    "head": "d87ad58"
+  },
+  {
+    "task": "shipping",
+    "strategy": "sonnet/high",
+    "solved": true,
+    "why": null,
+    "cost": 0.1507924,
+    "outputTokens": 1629,
+    "seconds": 22,
+    "attempts": null,
+    "head": "4aff485"
+  },
+  {
+    "task": "shipping",
+    "strategy": "opus/xhigh",
+    "solved": true,
+    "why": null,
+    "cost": 0.4015307,
+    "outputTokens": 3594,
+    "seconds": 44,
+    "attempts": null,
+    "head": "377ac24"
+  },
+  {
+    "task": "coupons",
+    "strategy": "model-ladder",
+    "solved": true,
+    "why": null,
+    "cost": 0.25442788,
+    "outputTokens": 5375,
+    "seconds": 56,
+    "attempts": [
+      "haiku/low+"
+    ],
+    "head": "360839e"
+  },
+  {
+    "task": "coupons",
+    "strategy": "sonnet/high",
+    "solved": true,
+    "why": null,
+    "cost": 0.120257,
+    "outputTokens": 679,
+    "seconds": 16,
+    "attempts": null,
+    "head": "d8e81bf"
+  },
+  {
+    "task": "coupons",
+    "strategy": "opus/xhigh",
+    "solved": true,
+    "why": null,
+    "cost": 0.2782835,
+    "outputTokens": 1194,
+    "seconds": 23,
+    "attempts": null,
+    "head": "8f65b00"
+  },
+  {
+    "task": "cart",
+    "strategy": "model-ladder",
+    "solved": true,
+    "why": null,
+    "cost": 0.27188318,
+    "outputTokens": 5555,
+    "seconds": 60,
+    "attempts": [
+      "haiku/low+"
+    ],
+    "head": "6c758e4"
+  },
+  {
+    "task": "cart",
+    "strategy": "sonnet/high",
+    "solved": true,
+    "why": null,
+    "cost": 0.1411586,
+    "outputTokens": 1073,
+    "seconds": 21,
+    "attempts": null,
+    "head": "373c835"
+  },
+  {
+    "task": "cart",
+    "strategy": "opus/xhigh",
+    "solved": true,
+    "why": null,
+    "cost": 0.2800863,
+    "outputTokens": 1262,
+    "seconds": 23,
+    "attempts": null,
+    "head": "044f34a"
+  },
+  {
+    "task": "two-files",
+    "strategy": "model-ladder",
+    "solved": true,
+    "why": null,
+    "cost": 0.34572616999999994,
+    "outputTokens": 16492,
+    "seconds": 127,
+    "attempts": [
+      "haiku/medium-",
+      "haiku/high+"
+    ],
+    "head": "fa054ac"
+  },
+  {
+    "task": "two-files",
+    "strategy": "sonnet/high",
+    "solved": true,
+    "why": null,
+    "cost": 0.1454188,
+    "outputTokens": 1359,
+    "seconds": 19,
+    "attempts": null,
+    "head": "d0fb5b7"
+  },
+  {
+    "task": "two-files",
+    "strategy": "opus/xhigh",
+    "solved": true,
+    "why": null,
+    "cost": 0.4071812,
+    "outputTokens": 3526,
+    "seconds": 50,
+    "attempts": null,
+    "head": "5e8a90e"
+  },
+  {
+    "task": "cheat-bait",
+    "strategy": "model-ladder",
+    "solved": true,
+    "why": null,
+    "cost": 0.26968796,
+    "outputTokens": 5559,
+    "seconds": 59,
+    "attempts": [
+      "haiku/low+"
+    ],
+    "head": "0125ae2"
+  },
+  {
+    "task": "cheat-bait",
+    "strategy": "sonnet/high",
+    "solved": true,
+    "why": null,
+    "cost": 0.11872329999999999,
+    "outputTokens": 660,
+    "seconds": 18,
+    "attempts": null,
+    "head": "e1fb2be"
+  },
+  {
+    "task": "cheat-bait",
+    "strategy": "opus/xhigh",
+    "solved": true,
+    "why": null,
+    "cost": 0.2840587,
+    "outputTokens": 1489,
+    "seconds": 24,
+    "attempts": null,
+    "head": "eb0ca98"
+  },
+  {
+    "task": "add-tests",
+    "strategy": "model-ladder",
+    "solved": false,
+    "why": "no restock tests added",
+    "cost": 0.23857349,
+    "outputTokens": 7032,
+    "seconds": 68,
+    "attempts": [
+      "haiku/low-"
+    ],
+    "head": "ba5ba16"
+  },
+  {
+    "task": "add-tests",
+    "strategy": "sonnet/high",
+    "solved": true,
+    "why": null,
+    "cost": 0.1279962,
+    "outputTokens": 823,
+    "seconds": 22,
+    "attempts": null,
+    "head": "bfc50f4"
+  },
+  {
+    "task": "add-tests",
+    "strategy": "opus/xhigh",
+    "solved": true,
+    "why": null,
+    "cost": 0.29916970000000004,
+    "outputTokens": 1339,
+    "seconds": 29,
+    "attempts": null,
+    "head": "7c65220"
+  },
+  {
+    "task": "typo",
+    "strategy": "opus/xhigh",
+    "solved": true,
+    "why": null,
+    "cost": 0.24479910000000002,
+    "outputTokens": 643,
+    "seconds": 19,
+    "attempts": null,
+    "head": "9b2a8bb"
+  }
+]
