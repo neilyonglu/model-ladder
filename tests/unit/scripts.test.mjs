@@ -32,7 +32,9 @@ function repo(files = { 'a.py': 'a = 1\n', 'b.py': 'b = 1\n', 'tests/test_a.py':
 }
 
 const preflight = (dir, ...flags) => JSON.parse(execFileSync('node', [script('preflight'), ...flags], { cwd: dir, encoding: 'utf8' }))
-const finish = (dir, input) => execFileSync('node', [script('finish')], { cwd: dir, input: JSON.stringify(input), encoding: 'utf8' })
+const finish = (dir, input) => execFileSync('node', [script('finish')], {
+  cwd: dir, input: JSON.stringify(input), encoding: 'utf8', env: { ...process.env, MODEL_LADDER_NO_UPDATE_CHECK: '1' },
+})
 
 // Stands in for a worker: a worktree created after preflight, with some edits.
 function worktree(dir, name, edits) {

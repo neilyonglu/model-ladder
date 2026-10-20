@@ -250,6 +250,14 @@ Tokens are output tokens per agent call, the change in `budget.spent()` around e
 
 History: one JSON line per run in `.model-ladder/history.jsonl` (task, status, start, attempts with cell, result, reason, action and tokens, applied, committed). It is what tells a project whether its ladder is tuned well.
 
+## Releases and updates
+
+Claude Code offers a plugin update only when `version` in `.claude-plugin/plugin.json` changes; new commits under the same version reach no one. Third-party marketplaces do not auto-update unless the user enables it, and Claude Code does not announce a pending update. So:
+
+- **The report announces new versions.** `scripts/update-check.mjs` reads the published `plugin.json` from GitHub at most once a day (cached in the OS temp folder), and finish appends one line with the update command when it is newer. Any failure is silent; `MODEL_LADDER_NO_UPDATE_CHECK=1` turns it off. Nothing about the user or the task is sent.
+- **CI blocks a forgotten bump.** `.github/scripts/check-version.mjs` fails when files under `.claude-plugin`, `skills`, `agents`, `hooks`, `scripts` or `workflows` changed since the latest `v*` tag while the version did not move past it.
+- **Each release** bumps the version, adds a `CHANGELOG.md` entry, and gets a `vX.Y.Z` tag and a GitHub Release, which notifies watchers.
+
 ## Testing
 
 ### Unit tests

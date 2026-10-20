@@ -7,6 +7,7 @@ import { appendFileSync, existsSync, readFileSync, rmSync, writeFileSync } from 
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { git, print, repoRoot, runDir, samePath, tryGit, worktrees } from './common.mjs'
+import { updateNote } from './update-check.mjs'
 
 function apply(root, run, state, winner) {
   const wt = winner.worktreePath
@@ -113,7 +114,9 @@ function main(input) {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
-    print(main(JSON.parse(readFileSync(0, 'utf8'))))
+    const text = main(JSON.parse(readFileSync(0, 'utf8')))
+    const update = await updateNote()
+    print(update ? `${text}\n\n${update}` : text)
   } catch (e) {
     print(`model-ladder finish failed: ${String(e.stderr ?? e.message)}`)
     process.exitCode = 1

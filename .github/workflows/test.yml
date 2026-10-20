@@ -21,3 +21,17 @@ jobs:
       - name: Unit tests
         shell: bash
         run: node --test tests/unit/*.test.mjs
+        env:
+          MODEL_LADDER_NO_UPDATE_CHECK: '1'
+
+  version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Version bumped when the plugin changed
+        run: node .github/scripts/check-version.mjs

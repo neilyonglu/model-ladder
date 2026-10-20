@@ -6,7 +6,7 @@
 
 [![test](https://github.com/neilyonglu/model-ladder/actions/workflows/test.yml/badge.svg)](https://github.com/neilyonglu/model-ladder/actions/workflows/test.yml)
 [![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-D97757?logo=claude&logoColor=white)](https://code.claude.com/docs/en/plugins)
-[![version](https://img.shields.io/badge/version-0.1.0-blue)](.claude-plugin/plugin.json)
+[![release](https://img.shields.io/github/v/release/neilyonglu/model-ladder?label=release&color=blue)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%E2%89%A520-339933?logo=nodedotjs&logoColor=white)](https://nodejs.org)
 [![license: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![vs opus/xhigh](https://img.shields.io/badge/vs%20opus%2Fxhigh-42%25%20cheaper-brightgreen)](#-is-it-worth-it-for-you)
@@ -130,6 +130,16 @@ Skip the approval prompt for each run by allowing the Workflow tool, for example
 ```json
 { "permissions": { "allow": ["Workflow"] } }
 ```
+
+**Updates**
+
+Claude Code does not auto-update plugins from third-party marketplaces unless you turn it on: `/plugin` → **Marketplaces** → **model-ladder** → **Enable auto-update**. Otherwise update by hand:
+
+```sh
+claude plugin update model-ladder@model-ladder
+```
+
+Either way, the end of a model-ladder report tells you when a newer version is out. What changed in each version: [CHANGELOG.md](CHANGELOG.md). To get notified on GitHub, **Watch** → **Custom** → **Releases**.
 
 ## 🚀 Use
 
