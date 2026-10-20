@@ -106,6 +106,7 @@ function main(flags) {
     workflowArgs: {
       config,
       protection,
+      baseCommit: head.out,
       hasVerifySkill: existsSync(join(root, '.claude', 'skills', 'verify', 'SKILL.md')),
       setupPatch,
       setupFiles,

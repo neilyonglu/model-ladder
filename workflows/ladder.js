@@ -193,9 +193,11 @@ function brief(plan, history, hint) {
     `VERIFY\n  ${plan.verify ?? 'Check every ACCEPTANCE item yourself.'}`,
     `FORBIDDEN\n  Do not create, modify or delete files matching: ${plan.protected.join(', ') || '(none)'}\n  Do not commit. Do not touch files outside this worktree.`,
   ]
-  if (args.setupPatch) {
-    sections.push(`SETUP (do this first)\n  git apply --whitespace=nowarn "${args.setupPatch}"\n  These are the user's uncommitted changes; build on them.`)
-  }
+  // The worktree is created from the remote default branch, not from the user's branch.
+  const setup = [`git reset -q --hard ${args.baseCommit}`]
+  if (args.setupPatch) setup.push(`git apply --whitespace=nowarn "${args.setupPatch}"`)
+  sections.push(`SETUP (do this first, in order)\n${setup.map((s) => `  ${s}`).join('\n')}\n  This moves the worktree to the user's current commit` +
+    (args.setupPatch ? ' and applies their uncommitted changes; build on them.' : '.'))
   if (history.length) {
     sections.push(`PREVIOUS ATTEMPTS (each started from a clean tree like yours; their code is gone)\n${bullets(history.map(summarize))}`)
     sections.push(`HINT\n  ${hint}`)
@@ -210,6 +212,7 @@ function verifyPrompt(plan, work) {
     : ''
   return `You verify one model-ladder attempt. Work only inside ${work.worktreePath}. Do not edit any file.
 
+0. Run \`git -C "${work.worktreePath}" rev-parse HEAD\`. If it is not ${args.baseCommit}, fail with reason "wrong base".
 1. ${args.setupPatch ? 'Confirm the setup patch is applied (the user\'s changes are present in the files it touches). If not, fail with reason "setup patch not applied".' : 'Skip.'}
 2. Run \`git -C "${work.worktreePath}" status --porcelain --untracked-files=all\`. If any changed or new file matches one of these globs, fail with reason "modified protected file <path>": ${plan.protected.join(', ') || '(none)'}${setup}
    Ignore build artifacts that running code rewrites: ${ARTIFACTS.join(', ')}

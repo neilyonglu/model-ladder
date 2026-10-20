@@ -61,6 +61,7 @@ test('clean repo: READY, marker armed with test patterns, protection for the wor
   assert.deepEqual(out.workflowArgs.protection.always, ['.claude/model-ladder.json'])
   assert.equal(out.workflowArgs.config.verifier.model, 'haiku')
   assert.equal(out.workflowArgs.setupPatch, null)
+  assert.equal(out.workflowArgs.baseCommit, git(dir, 'rev-parse', 'HEAD'))
   const marker = JSON.parse(read(dir, '.model-ladder/run.json'))
   assert.ok(marker.tests.includes('**/tests/**'))
 })

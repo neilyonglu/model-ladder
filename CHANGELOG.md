@@ -2,6 +2,12 @@
 
 All notable changes to model-ladder. Versions follow [semantic versioning](https://semver.org); Claude Code only offers an update when `version` in `.claude-plugin/plugin.json` changes.
 
+## [0.1.3] - 2026-10-20
+
+### Fixed
+
+- Attempts ran on the remote default branch instead of the user's current commit, because Claude Code creates worktrees from `origin/HEAD`. On a feature branch the worker saw the wrong code, and a verified result would have carried back the difference between the two branches. Each attempt now resets its worktree to the commit recorded by preflight before applying uncommitted changes, and the verifier fails an attempt on any other base.
+
 ## [0.1.2] - 2026-10-20
 
 ### Fixed
@@ -20,6 +26,7 @@ All notable changes to model-ladder. Versions follow [semantic versioning](https
 
 First release: cheap-first model × effort ladder for Claude Code, with a router, isolated worktree attempts, a verifier, protected tests, and history. Includes path matching that works with Windows 8.3 short names.
 
+[0.1.3]: https://github.com/neilyonglu/model-ladder/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/neilyonglu/model-ladder/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/neilyonglu/model-ladder/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/neilyonglu/model-ladder/releases/tag/v0.1.0
