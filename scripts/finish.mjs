@@ -80,7 +80,10 @@ function main(input) {
   let outcome = { applied: false, files: [] }
   let keep = []
 
-  if (result?.status === 'VERIFIED') {
+  // A read-only winner ran in the user's own checkout; apply would stage their changes.
+  if (result?.status === 'VERIFIED' && !result.winner.filesChanged?.length) {
+    outcome = { applied: false, files: [], note: 'read-only attempt, nothing to apply' }
+  } else if (result?.status === 'VERIFIED') {
     outcome = apply(root, run, state, { ...result.winner, goal: result.plan.goal })
     if (outcome.keep) keep = [outcome.keep]
   }

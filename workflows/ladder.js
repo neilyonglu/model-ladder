@@ -77,6 +77,7 @@ const ROUTE_SCHEMA = {
     allowTestsReason: { type: 'string' },
     question: { type: ['string', 'null'] },
     small: { type: 'boolean' },
+    readOnly: { type: 'boolean' },
     smallReason: { type: 'string' },
   },
   required: ['model', 'effort', 'reason', 'goal', 'scope', 'verify', 'acceptance', 'allowTests', 'allowTestsReason', 'question', 'small', 'smallReason'],
@@ -165,7 +166,8 @@ Also return:
 - allowTests: true only when the task itself is to write or change tests. A bug fix is not: the tests define the expected behavior.
 - question: if the task is too vague to act on (no clear outcome, several very different readings), the one question that would settle it. Otherwise null. A worker would guess, and passing tests would hide the guess.
 - small: true when the task touches one or two files and its design is already given (for example "implement this function as described"), so a capable model would finish it in one pass. Otherwise false.
-- smallReason: one sentence on why.`
+- smallReason: one sentence on why.
+- readOnly: true when the task only reads and reports (a review, an analysis, a question) and edits no file. Otherwise false.`
   const { result: r, error, tokens } = await measured(prompt, {
     label: 'route', phase: 'Route', schema: ROUTE_SCHEMA, agentType: 'model-ladder:router', ...config.router,
   })
@@ -185,6 +187,7 @@ Also return:
     allowTestsReason: r.allowTestsReason,
     protected: protectedPatterns(args.protection, r.allowTests),
     question: r.question,
+    readOnly: r.readOnly === true,
     direct: isDirect(r.small === true, args.contextTokens, args.forceLadder),
     directReason: `${r.smallReason} The calling session holds about ${args.contextTokens} tokens of context, ${(args.contextTokens ?? 0) > LARGE_CONTEXT ? 'above' : 'not above'} the ${LARGE_CONTEXT} threshold.`,
     // Without a verify step the user, not the router, decides what done means.
@@ -205,13 +208,18 @@ function brief(plan, history, hint) {
     `SCOPE\n  ${plan.scope.length ? plan.scope.join(', ') : 'Decide from the code.'}`,
     `ACCEPTANCE\n${bullets(plan.acceptance)}`,
     `VERIFY\n  ${plan.verify ?? 'Check every ACCEPTANCE item yourself.'}`,
-    `FORBIDDEN\n  Do not create, modify or delete files matching: ${plan.protected.join(', ') || '(none)'}\n  Do not commit. Do not touch files outside this worktree.`,
   ]
-  // The worktree is created from the remote default branch, not from the user's branch.
-  const setup = [`git reset -q --hard ${args.baseCommit}`]
-  if (args.setupPatch) setup.push(`git apply --whitespace=nowarn "${args.setupPatch}"`)
-  sections.push(`SETUP (do this first, in order)\n${setup.map((s) => `  ${s}`).join('\n')}\n  This moves the worktree to the user's current commit` +
-    (args.setupPatch ? ' and applies their uncommitted changes; build on them.' : '.'))
+  // A read-only attempt runs in the user's own checkout: no worktree, so no reset and no setup patch.
+  if (plan.readOnly) {
+    sections.push('READ-ONLY\n  You run in the user\'s own checkout, not a worktree. Do not create, modify or delete any file, and run no git command that changes state. Your summary is the deliverable: put the full report in it.')
+  } else {
+    sections.push(`FORBIDDEN\n  Do not create, modify or delete files matching: ${plan.protected.join(', ') || '(none)'}\n  Do not commit. Do not touch files outside this worktree.`)
+    // The worktree is created from the remote default branch, not from the user's branch.
+    const setup = [`git reset -q --hard ${args.baseCommit}`]
+    if (args.setupPatch) setup.push(`git apply --whitespace=nowarn "${args.setupPatch}"`)
+    sections.push(`SETUP (do this first, in order)\n${setup.map((s) => `  ${s}`).join('\n')}\n  This moves the worktree to the user's current commit` +
+      (args.setupPatch ? ' and applies their uncommitted changes; build on them.' : '.'))
+  }
   if (history.length) {
     sections.push(`PREVIOUS ATTEMPTS (each started from a clean tree like yours; their code is gone)\n${bullets(history.map(summarize))}`)
     sections.push(`HINT\n  ${hint}`)
@@ -298,7 +306,7 @@ async function run(plan) {
     phase(`Attempt ${n}`)
     const worker = await measured(brief(plan, history, hint), {
       label: `worker ${label(cell)}`, phase: `Attempt ${n}`, schema: WORKER_SCHEMA,
-      agentType: workerType, isolation: 'worktree', ...cell,
+      agentType: workerType, ...(plan.readOnly ? {} : { isolation: 'worktree' }), ...cell,
     })
     tokens += worker.tokens
     const work = worker.result
@@ -306,6 +314,7 @@ async function run(plan) {
     let verifyTokens = 0
     if (!work) verdict = { pass: false, reason: `worker ${worker.error}`, output: '' }
     else if (work.status === 'blocked') verdict = { pass: false, reason: `worker blocked: ${work.blockedReason}`, output: '' }
+    else if (plan.readOnly && work.filesChanged.length) verdict = { pass: false, reason: `read-only task changed ${work.filesChanged.join(', ')}`, output: '' }
     // Without a verify command an empty diff can be a read-only task; the verifier judges the report instead.
     else if (!work.filesChanged.length && plan.verify) verdict = { pass: false, reason: 'worker changed nothing', output: '' }
     else {

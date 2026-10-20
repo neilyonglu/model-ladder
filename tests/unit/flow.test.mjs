@@ -137,6 +137,23 @@ test('without a verify command an empty diff is a read-only report the verifier 
   assert.match(calls[1].prompt, /read-only/)
 })
 
+test('a read-only plan runs the worker in the user checkout, without a worktree or reset', async () => {
+  const ro = { ...plan, verify: null, readOnly: true }
+  const { out, calls } = await runWith(
+    [{ label: 'worker', result: { ...done, filesChanged: [], summary: 'the report' } }, { label: 'verify', result: pass }],
+    { plan: ro, baseCommit: 'abc' },
+  )
+  assert.equal(out.status, 'VERIFIED')
+  assert.equal(calls[0].isolation, undefined)
+  assert.match(calls[0].prompt, /READ-ONLY/)
+  assert.doesNotMatch(calls[0].prompt, /reset/)
+  const edited = await runWith(
+    [{ label: 'worker', result: done }, { label: 'final diagnosis', result: { reason: 'r', suggestion: 's' } }],
+    { plan: { ...ro, start: { model: 'opus', effort: 'xhigh' } } },
+  )
+  assert.equal(edited.out.attempts[0].reason, 'read-only task changed a.py')
+})
+
 test('directReason says whether the context is above the threshold', async () => {
   const route = { model: 'haiku', effort: 'low', reason: 'r', goal: 'g', scope: [], verify: null, acceptance: ['a'], allowTests: false, allowTestsReason: 'r', question: null, small: false, smallReason: 'Not small.' }
   const { out } = await call([{ label: 'route', result: route }], { contextTokens: 45000 })

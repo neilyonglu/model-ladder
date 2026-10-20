@@ -2,6 +2,12 @@
 
 All notable changes to model-ladder. Versions follow [semantic versioning](https://semver.org); Claude Code only offers an update when `version` in `.claude-plugin/plugin.json` changes.
 
+## [Unreleased]
+
+### Changed
+
+- A read-only task runs without a worktree. The router returns `readOnly`; the worker then works in the user's own checkout with no reset or setup patch, must edit nothing (an attempt that changes a file fails), and its report is the result. Finish never applies a read-only winner, so the user's uncommitted changes are not staged. This also avoids worktree failures that a read-only task has no reason to risk.
+
 ## [0.1.6] - 2026-10-20
 
 ### Fixed
