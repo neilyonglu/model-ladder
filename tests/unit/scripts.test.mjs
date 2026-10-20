@@ -192,6 +192,17 @@ test('FAILED: worktrees removed, kept only with keepFailed', () => {
   assert.ok(existsSync(kept))
 })
 
+test('VERIFIED read-only: nothing applied, the report is printed', () => {
+  const dir = repo()
+  preflight(dir)
+  const wt = worktree(dir, 'wf_ro', {})
+  const result = verified(wt, [])
+  result.winner.summary = 'A-D tables'
+  const report = finish(dir, { task: 'review', result })
+  assert.match(report, /read-only attempt, nothing to apply/)
+  assert.match(report, /Report\n\nA-D tables/)
+})
+
 test('DIRECT: nothing applied, guard disarmed, history says DIRECT', () => {
   const dir = repo()
   preflight(dir)

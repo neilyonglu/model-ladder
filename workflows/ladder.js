@@ -186,7 +186,7 @@ Also return:
     protected: protectedPatterns(args.protection, r.allowTests),
     question: r.question,
     direct: isDirect(r.small === true, args.contextTokens, args.forceLadder),
-    directReason: `${r.smallReason} The calling session holds about ${args.contextTokens} tokens of context, above ${LARGE_CONTEXT}.`,
+    directReason: `${r.smallReason} The calling session holds about ${args.contextTokens} tokens of context, ${(args.contextTokens ?? 0) > LARGE_CONTEXT ? 'above' : 'not above'} the ${LARGE_CONTEXT} threshold.`,
     // Without a verify step the user, not the router, decides what done means.
     needsAcceptance: !verify && !args.acceptance?.length,
     routeTokens: tokens,
@@ -230,7 +230,7 @@ function verifyPrompt(plan, work) {
 1. ${args.setupPatch ? 'Confirm the setup patch is applied (the user\'s changes are present in the files it touches). If not, fail with reason "setup patch not applied".' : 'Skip.'}
 2. Run \`git -C "${work.worktreePath}" status --porcelain --untracked-files=all\`. If any changed or new file matches one of these globs, fail with reason "modified protected file <path>": ${plan.protected.join(', ') || '(none)'}${setup}
    Ignore build artifacts that running code rewrites: ${ARTIFACTS.join(', ')}
-3. ${plan.verify ? `Run the verify step from the worktree root: ${plan.verify}\n   Pass only if it succeeds.` : 'There is no verify command. Judge each ACCEPTANCE item against the diff (`git diff` plus new files). Be strict: pass only if every item is clearly met.'}
+3. ${plan.verify ? `Run the verify step from the worktree root: ${plan.verify}\n   Pass only if it succeeds.` : 'There is no verify command. Judge each ACCEPTANCE item against the diff (`git diff` plus new files). If the attempt changed no files, the task is read-only and the worker report below is the deliverable: judge it instead, and spot-check its claims against the sources it cites. Be strict: pass only if every item is clearly met.'}
 
 ACCEPTANCE
 ${bullets(plan.acceptance)}
@@ -289,7 +289,7 @@ async function run(plan) {
       action: a.diagnosis?.action ?? null, actionReason: a.diagnosis?.reason ?? null,
       tokens: a.tokens, worktreePath: a.work?.worktreePath ?? null,
     })),
-    winner: winner ? { worktreePath: winner.worktreePath, filesChanged: winner.filesChanged } : null,
+    winner: winner ? { worktreePath: winner.worktreePath, filesChanged: winner.filesChanged, summary: winner.summary } : null,
     final,
     tokens,
   })
@@ -306,7 +306,8 @@ async function run(plan) {
     let verifyTokens = 0
     if (!work) verdict = { pass: false, reason: `worker ${worker.error}`, output: '' }
     else if (work.status === 'blocked') verdict = { pass: false, reason: `worker blocked: ${work.blockedReason}`, output: '' }
-    else if (!work.filesChanged.length) verdict = { pass: false, reason: 'worker changed nothing', output: '' }
+    // Without a verify command an empty diff can be a read-only task; the verifier judges the report instead.
+    else if (!work.filesChanged.length && plan.verify) verdict = { pass: false, reason: 'worker changed nothing', output: '' }
     else {
       const verifier = await measured(verifyPrompt(plan, work), {
         label: 'verify', phase: `Attempt ${n}`, schema: VERDICT_SCHEMA, agentType: 'model-ladder:verifier', ...verifierCell,

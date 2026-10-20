@@ -17,7 +17,7 @@ function apply(root, run, state, winner) {
   const patch = join(run, 'result.patch')
   writeFileSync(patch, git(root, 'diff', '--binary', state.baseTree, resultTree) + '\n')
   const files = git(root, 'diff', '--name-only', state.baseTree, resultTree).split('\n').filter(Boolean)
-  if (!files.length) return { applied: false, files, note: 'the winning attempt changed nothing' }
+  if (!files.length) return { applied: false, files, note: 'read-only attempt, nothing to apply' }
   const applied = tryGit(root, 'apply', patch)
   if (!applied.ok) {
     return { applied: false, files, keep: wt, note: `the patch does not apply cleanly (files changed during the run?). Worktree kept at ${wt}; patch at ${patch}` }
@@ -63,6 +63,8 @@ function report(task, result, outcome, notes) {
     `Applied   ${result.status === 'VERIFIED' ? applied : 'nothing (no verified attempt)'}`,
     `Tokens    ${result.tokens} output (route + attempts)`,
   ]
+  // A read-only attempt's report is the deliverable; nothing else carries it back.
+  if (result.status === 'VERIFIED' && !outcome.files?.length && result.winner?.summary) lines.push('', 'Report', '', result.winner.summary)
   if (result.final) lines.push('', `Why       ${result.final.reason}`, `Next      ${result.final.suggestion}`)
   for (const note of notes) lines.push('', note)
   return lines.join('\n')

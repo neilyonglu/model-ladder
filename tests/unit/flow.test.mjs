@@ -57,7 +57,7 @@ const diag = (action, model, effort) => ({ action, model, effort, reason: 'r', h
 test('passes on the first attempt', async () => {
   const { out, calls } = await runWith([{ label: 'worker', result: done }, { label: 'verify', result: pass }])
   assert.equal(out.status, 'VERIFIED')
-  assert.deepEqual(out.winner, { worktreePath: '/wt', filesChanged: ['a.py'] })
+  assert.deepEqual(out.winner, { worktreePath: '/wt', filesChanged: ['a.py'], summary: 's' })
   assert.equal(out.attempts.length, 1)
   assert.equal(calls[0].model, 'haiku')
   assert.equal(calls[0].isolation, 'worktree')
@@ -125,6 +125,22 @@ test('blocked, empty, dead and throwing workers fail without calling the verifie
     'worker blocked: nope', 'worker changed nothing', 'worker died before reporting',
     'worker failed: StructuredOutput invalid after 5 retries',
   ])
+})
+
+test('without a verify command an empty diff is a read-only report the verifier judges', async () => {
+  const { out, calls } = await runWith(
+    [{ label: 'worker', result: { ...done, filesChanged: [], summary: 'the report' } }, { label: 'verify', result: pass }],
+    { plan: { ...plan, verify: null } },
+  )
+  assert.equal(out.status, 'VERIFIED')
+  assert.equal(out.winner.summary, 'the report')
+  assert.match(calls[1].prompt, /read-only/)
+})
+
+test('directReason says whether the context is above the threshold', async () => {
+  const route = { model: 'haiku', effort: 'low', reason: 'r', goal: 'g', scope: [], verify: null, acceptance: ['a'], allowTests: false, allowTestsReason: 'r', question: null, small: false, smallReason: 'Not small.' }
+  const { out } = await call([{ label: 'route', result: route }], { contextTokens: 45000 })
+  assert.match(out.plan.directReason, /45000 tokens of context, not above the 150000 threshold/)
 })
 
 test('a throwing diagnosis falls back to the default move', async () => {
