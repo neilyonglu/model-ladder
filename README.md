@@ -103,6 +103,13 @@ A move only goes up: a higher effort within the same model (opus one step at a t
 /plugin install model-ladder@model-ladder
 ```
 
+Where `/plugin` is not available, such as the Claude Code extension for VS Code, install from a terminal instead. The extension shares the same settings; reload its window afterwards.
+
+```sh
+claude plugin marketplace add neilyonglu/model-ladder
+claude plugin install model-ladder@model-ladder
+```
+
 **Requirements**
 
 - Claude Code with the Workflow tool (paid plans; on Pro, enable it in `/config`). Tested on 2.1.296.
