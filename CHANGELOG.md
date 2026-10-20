@@ -2,6 +2,12 @@
 
 All notable changes to model-ladder. Versions follow [semantic versioning](https://semver.org); Claude Code only offers an update when `version` in `.claude-plugin/plugin.json` changes.
 
+## [0.1.2] - 2026-10-20
+
+### Fixed
+
+- `--allow-dirty` failed with "staged content different from both the file and the HEAD: .model-ladder/index" in a repo that does not ignore `.model-ladder/`.
+
 ## [0.1.1] - 2026-10-20
 
 ### Added
@@ -14,5 +20,6 @@ All notable changes to model-ladder. Versions follow [semantic versioning](https
 
 First release: cheap-first model × effort ladder for Claude Code, with a router, isolated worktree attempts, a verifier, protected tests, and history. Includes path matching that works with Windows 8.3 short names.
 
+[0.1.2]: https://github.com/neilyonglu/model-ladder/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/neilyonglu/model-ladder/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/neilyonglu/model-ladder/releases/tag/v0.1.0

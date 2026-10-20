@@ -107,6 +107,16 @@ test('dirty tree: DIRTY first; with consent, a snapshot that leaves the real ind
   assert.equal(git(dir, 'diff', '--cached', '--name-only'), '')
 })
 
+test('dirty tree without .model-ladder ignored: the snapshot still leaves out the run dir', () => {
+  const dir = repo()
+  git(dir, 'rm', '-q', '.gitignore')
+  git(dir, 'commit', '-q', '-m', 'no ignore')
+  write(dir, 'a.py', 'a = 2\n')
+  const out = preflight(dir, '--allow-dirty')
+  assert.equal(out.status, 'READY', out.message)
+  assert.deepEqual(out.workflowArgs.setupFiles, ['a.py'])
+})
+
 test('VERIFIED: applies only the worker change, cleans up, writes history', () => {
   const dir = repo()
   preflight(dir)

@@ -88,7 +88,8 @@ function main(flags) {
     g('read-tree', 'HEAD')
     // Not `add -- . ':!.model-ladder'`: git rejects an exclude pathspec that names an ignored path.
     g('add', '-A')
-    g('rm', '-r', '-q', '--cached', '--ignore-unmatch', '--', '.model-ladder', '.claude/worktrees')
+    // -f: when the run dir is not ignored, `add -A` stages this temporary index while git is still writing it.
+    g('rm', '-r', '-q', '-f', '--cached', '--ignore-unmatch', '--', '.model-ladder', '.claude/worktrees')
     baseTree = g('write-tree').trim()
     setupPatch = join(run, 'setup.patch')
     writeFileSync(setupPatch, g('diff', '--cached', '--binary', 'HEAD'))
