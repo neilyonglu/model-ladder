@@ -1,6 +1,7 @@
 export const meta = {
   name: 'ladder',
-  description: 'Route a coding task to the cheapest model and effort likely to succeed, verify, escalate on failure',
+  description: 'Internal engine of model-ladder. Use /model-ladder:run <task> instead.',
+  whenToUse: 'Never directly: /model-ladder:run prepares its args, applies its result and cleans up after it.',
 }
 
 // Workflow scripts cannot import, so the pure helpers live here.
@@ -340,6 +341,10 @@ Explain to the user why it failed (reason) and what they can do next (suggestion
   )
   tokens += final.tokens
   return done('FAILED', null, final.result)
+}
+
+if (!args?.task || !args?.config || !args?.protection) {
+  throw new Error('model-ladder: this is the internal engine. Run /model-ladder:run <task> instead; it prepares these args and applies the result.')
 }
 
 // One call routes and runs. It returns early only when the user must answer first;

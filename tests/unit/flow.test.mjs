@@ -207,6 +207,12 @@ test('a vague task returns the router question', async () => {
   assert.equal(out.plan.question, 'Better how?')
 })
 
+test('called directly without the skill, it points to /model-ladder:run', async () => {
+  const h = harness([])
+  await assert.rejects(body(undefined, h.agent, h.budget, () => {}, () => {}), /Run \/model-ladder:run <task> instead/)
+  await assert.rejects(body({ task: 't' }, h.agent, h.budget, () => {}, () => {}), /internal engine/)
+})
+
 test('a router that fails to report stops the run', async () => {
   await assert.rejects(call([{ label: 'route', throws: 'boom' }]), /the router failed: boom/)
 })
