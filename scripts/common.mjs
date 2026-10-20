@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process'
-import { join, resolve } from 'node:path'
+import { join } from 'node:path'
+import { canonical } from '../hooks/guard.mjs'
 
 export const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trimEnd()
 export const tryGit = (cwd, ...args) => {
@@ -14,7 +15,7 @@ export const repoRoot = () => git(process.cwd(), 'rev-parse', '--show-toplevel')
 // Run files live outside .git and .claude: Claude Code asks permission to change files in both.
 export const runDir = (root) => join(root, '.model-ladder')
 
-export const samePath = (a, b) => resolve(a).toLowerCase() === resolve(b).toLowerCase()
+export const samePath = (a, b) => canonical(a).toLowerCase() === canonical(b).toLowerCase()
 
 export function worktrees(root) {
   const list = []

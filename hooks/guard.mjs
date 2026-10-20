@@ -1,8 +1,8 @@
 // PreToolUse guard: during a model-ladder run, workers may not edit protected paths.
 // Fails open: any error exits 0, and the verifier's diff check still catches the edit.
 import { execFileSync } from 'node:child_process'
-import { existsSync, readFileSync } from 'node:fs'
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
+import { existsSync, readFileSync, realpathSync } from 'node:fs'
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 // `worker` fixes code and may not touch tests; `test-writer` is the worker for tasks that are about tests.
@@ -41,6 +41,16 @@ export function isProtected(relPath, patterns) {
   return patterns.some((p) => globToRegExp(p).test(path))
 }
 
+// One spelling per path. On Windows the same folder can be C:\Users\RUNNER~1 (8.3 short name)
+// or C:\Users\runneradmin, and git always reports the long one. The file itself may not exist
+// yet (a worker about to create it), so resolve its nearest existing ancestor.
+export function canonical(path) {
+  const full = resolve(path)
+  if (existsSync(full)) return realpathSync.native(full)
+  const parent = dirname(full)
+  return parent === full ? full : join(canonical(parent), basename(full))
+}
+
 function git(cwd, ...args) {
   return execFileSync('git', args, { cwd, encoding: 'utf8' }).trim()
 }
@@ -56,8 +66,8 @@ export function check(input) {
   if (!existsSync(markerPath)) return null
   const marker = JSON.parse(readFileSync(markerPath, 'utf8'))
   const patterns = input.agent_type === WORKER ? [...marker.protected, ...marker.tests] : marker.protected
-  const root = git(input.cwd, 'rev-parse', '--show-toplevel')
-  const rel = relative(root, isAbsolute(target) ? target : resolve(input.cwd, target))
+  const root = canonical(git(input.cwd, 'rev-parse', '--show-toplevel'))
+  const rel = relative(root, canonical(isAbsolute(target) ? target : resolve(input.cwd, target)))
   if (!isProtected(rel, patterns)) return null
   return `model-ladder: ${rel.replaceAll('\\', '/')} is protected during this run. Fix the code, not the tests.`
 }

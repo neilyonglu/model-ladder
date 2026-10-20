@@ -205,8 +205,4 @@ The brief format and the "verifier on a fresh context" rule are adapted from [ps
 
 Released under the [MIT License](LICENSE). Copyright (c) 2026 neilyonglu.
 
-You may use, copy, modify, merge, publish, distribute, sublicense and sell copies of this software, in personal or commercial projects, provided the copyright notice and the license text are kept in every copy or substantial portion. The software is provided "as is", without warranty of any kind; the authors are not liable for any claim or damage arising from its use.
-
-model-ladder runs Claude models through your own Claude Code installation. Your use of those models stays subject to Anthropic's terms for your plan, and their usage counts against your plan's limits.
-
-Claude and Claude Code are trademarks of Anthropic. This project is independent and is not affiliated with or endorsed by Anthropic.
+Built in collaboration with Claude Code. Found a problem? Please [open an issue](https://github.com/neilyonglu/model-ladder/issues). Codex support is planned.
