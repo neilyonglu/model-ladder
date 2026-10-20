@@ -2,12 +2,13 @@
 
 All notable changes to model-ladder. Versions follow [semantic versioning](https://semver.org); Claude Code only offers an update when `version` in `.claude-plugin/plugin.json` changes.
 
-## [Unreleased]
+## [0.1.6] - 2026-10-20
 
 ### Fixed
 
 - A read-only task (a review or report, no file edits) no longer fails as "worker changed nothing". Without a verify command, an attempt that changed no files goes to the verifier, which judges the worker's report against the acceptance criteria. Finish prints that report, since nothing else carries it back. With a verify command, an empty diff still fails.
 - `directReason` said the context was "above 150000" even when it was not. It now says above or not above the threshold.
+- The acceptance prompt crammed the router's reason and every criterion into one paragraph. The skill now prints them as a numbered list first and asks a short question.
 
 ## [0.1.5] - 2026-10-20
 
@@ -45,6 +46,7 @@ All notable changes to model-ladder. Versions follow [semantic versioning](https
 
 First release: cheap-first model × effort ladder for Claude Code, with a router, isolated worktree attempts, a verifier, protected tests, and history. Includes path matching that works with Windows 8.3 short names.
 
+[0.1.6]: https://github.com/neilyonglu/model-ladder/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/neilyonglu/model-ladder/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/neilyonglu/model-ladder/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/neilyonglu/model-ladder/compare/v0.1.2...v0.1.3
