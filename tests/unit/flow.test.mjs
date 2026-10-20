@@ -157,7 +157,7 @@ test('a read-only plan runs the worker in the user checkout, without a worktree 
 test('directReason says whether the context is above the threshold', async () => {
   const route = { model: 'haiku', effort: 'low', reason: 'r', goal: 'g', scope: [], verify: null, acceptance: ['a'], allowTests: false, allowTestsReason: 'r', question: null, small: false, smallReason: 'Not small.' }
   const { out } = await call([{ label: 'route', result: route }], { contextTokens: 45000 })
-  assert.match(out.plan.directReason, /45000 tokens of context, not above the 150000 threshold/)
+  assert.match(out.plan.directReason, /45000 tokens of context, not above the 300000 threshold/)
 })
 
 test('a throwing diagnosis falls back to the default move', async () => {
@@ -232,6 +232,8 @@ test('no verify returns for user input, with the router proposal', async () => {
   assert.equal(out.status, 'NEEDS_INPUT')
   assert.equal(out.plan.needsAcceptance, true)
   assert.deepEqual(out.plan.acceptance, ['prints NT$ 1,234'])
+  assert.match(out.plan.acceptanceMessage, /\*\*Acceptance criteria \(proposed\)\*\*\n1\. prints NT\$ 1,234$/)
+  assert.equal(out.plan.acceptanceQuestion, 'Run with these criteria?')
 })
 
 test('a vague task returns the router question', async () => {
@@ -247,21 +249,21 @@ test('called directly without the skill, it points to /model-ladder:run', async 
 })
 
 test('a small task in a large session comes back DIRECT, before any worker', async () => {
-  const { out } = await routeOnly({ ...routed, small: true, smallReason: 'one function' }, { contextTokens: 300000 })
+  const { out } = await routeOnly({ ...routed, small: true, smallReason: 'one function' }, { contextTokens: 400000 })
   assert.equal(out.status, 'DIRECT')
   assert.match(out.plan.directReason, /one function/)
-  assert.match(out.plan.directReason, /300000/)
+  assert.match(out.plan.directReason, /400000/)
   assert.deepEqual(out.attempts, [])
 })
 
 test('a small task in a small session, or a large task anywhere, still runs the ladder', async () => {
   assert.equal((await routeThenPass({ ...routed, small: true }, { contextTokens: 50000 })).out.status, 'VERIFIED')
-  assert.equal((await routeThenPass({ ...routed, small: false }, { contextTokens: 300000 })).out.status, 'VERIFIED')
+  assert.equal((await routeThenPass({ ...routed, small: false }, { contextTokens: 400000 })).out.status, 'VERIFIED')
   assert.equal((await routeThenPass({ ...routed, small: true })).out.status, 'VERIFIED')
 })
 
 test('forceLadder overrides DIRECT', async () => {
-  const { out } = await routeThenPass({ ...routed, small: true }, { contextTokens: 300000, forceLadder: true })
+  const { out } = await routeThenPass({ ...routed, small: true }, { contextTokens: 400000, forceLadder: true })
   assert.equal(out.status, 'VERIFIED')
 })
 

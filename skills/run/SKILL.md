@@ -30,17 +30,7 @@ Call the Workflow tool with name `model-ladder:ladder` and args `{ "task": "<tas
 If it returns `status: "NEEDS_INPUT"`:
 
 - `plan.question` is set: ask it. On an answer, call again with the task plus `\nClarification: <answer>`.
-- `plan.needsAcceptance` is true: there is no verify step, so the user decides what done means. First print the proposal as a message, never inside the question, since the question box shows one flat paragraph:
-
-  ```md
-  **Ladder start:** <model>/<effort> — <the router's reason, one line>
-
-  **Acceptance criteria (proposed)**
-  1. <criterion>
-  2. <criterion>
-  ```
-
-  Then ask a short question ("Run with these criteria?") with the options run / stop; the user gives their own criteria, one per line, through Other. Call again with the same args plus `"plan": <plan with acceptance set to their criteria>`.
+- `plan.needsAcceptance` is true: there is no verify step, so the user decides what done means. Print `plan.acceptanceMessage` verbatim as a message (the question box shows one flat paragraph, so the list never goes in the question). Then ask `plan.acceptanceQuestion` verbatim, nothing added, with the options run / stop; the user gives their own criteria, one per line, through Other. Call again with the same args plus `"plan": <plan with acceptance set to their criteria>`.
 - If the user declines either, go to step 3 with `{ "task": "<task>", "aborted": "<why>" }`.
 
 If it returns `status: "DIRECT"`, the router judged the task small and this session too large for the ladder to pay off. Go to step 3 with that result.

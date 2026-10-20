@@ -49,7 +49,7 @@ function pickMove(choice, cell, tiers) {
 
 // Orchestration re-reads the caller's context on every turn; past this size a small task costs
 // less done directly. Provisional: see DESIGN.md › Ladder or direct.
-const LARGE_CONTEXT = 150000
+const LARGE_CONTEXT = 300000
 
 function isDirect(small, contextTokens, forceLadder) {
   return !forceLadder && small && (contextTokens ?? 0) > LARGE_CONTEXT
@@ -176,9 +176,10 @@ Also return:
   const start = isCell(r, config.tiers) ? { model: r.model, effort: r.effort } : lowest
   const verify = config.verify ?? (args.hasVerifySkill ? VERIFY_SKILL : r.verify)
   const acceptance = args.acceptance?.length ? args.acceptance : r.acceptance
+  const startReason = isCell(r, config.tiers) ? r.reason : `Router picked ${label(r)}, not in the grid; starting at ${label(lowest)}`
   return {
     start,
-    startReason: isCell(r, config.tiers) ? r.reason : `Router picked ${label(r)}, not in the grid; starting at ${label(lowest)}`,
+    startReason,
     goal: r.goal,
     scope: r.scope,
     verify,
@@ -192,6 +193,9 @@ Also return:
     directReason: `${r.smallReason} The calling session holds about ${args.contextTokens} tokens of context, ${(args.contextTokens ?? 0) > LARGE_CONTEXT ? 'above' : 'not above'} the ${LARGE_CONTEXT} threshold.`,
     // Without a verify step the user, not the router, decides what done means.
     needsAcceptance: !verify && !args.acceptance?.length,
+    // Built here, not by the skill: the question box shows one flat paragraph, so the list goes in a message.
+    acceptanceMessage: `**Ladder start:** ${label(start)} — ${startReason}\n\n**Acceptance criteria (proposed)**\n${acceptance.map((a, i) => `${i + 1}. ${a}`).join('\n')}`,
+    acceptanceQuestion: 'Run with these criteria?',
     routeTokens: tokens,
   }
 }

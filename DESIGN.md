@@ -116,7 +116,7 @@ The orchestration runs in the calling session, so each of its model calls re-rea
 
 So the workflow skips the ladder, returning `DIRECT`, when both hold:
 
-| | Small context | Large context (above ~150k tokens) |
+| | Small context | Large context (above ~300k tokens) |
 |---|---|---|
 | Small task (one or two files, design given) | ladder | direct |
 | Larger task | ladder | ladder |
