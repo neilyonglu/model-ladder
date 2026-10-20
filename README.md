@@ -2,7 +2,7 @@
 
 # 🪜 model-ladder
 
-**Start every coding task on the cheapest Claude model that can do it. Climb only when your tests say so.**
+**Start every coding task on the cheapest model that can do it. Climb only when your tests say so.**
 
 [![test](https://github.com/neilyonglu/model-ladder/actions/workflows/test.yml/badge.svg)](https://github.com/neilyonglu/model-ladder/actions/workflows/test.yml)
 [![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-D97757?logo=claude&logoColor=white)](https://code.claude.com/docs/en/plugins)
@@ -17,7 +17,7 @@
 
 ---
 
-model-ladder is a [Claude Code](https://code.claude.com) plugin. It runs your task on a cheap model at low effort in an isolated git worktree, checks the result with your own tests, and moves up a model × effort grid only when an attempt fails. A router decides each move from what actually went wrong, and code makes sure it only ever moves up.
+model-ladder is a plugin for coding agents. It runs on [Claude Code](https://code.claude.com) today; Codex support is planned. It runs your task on a cheap model at low effort in an isolated git worktree, checks the result with your own tests, and moves up a model × effort grid only when an attempt fails. A router decides each move from what actually went wrong, and code makes sure it only ever moves up.
 
 ```text
 /model-ladder:run Fix the typo in the welcome message
