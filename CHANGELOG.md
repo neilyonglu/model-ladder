@@ -2,6 +2,13 @@
 
 All notable changes to model-ladder. Versions follow [semantic versioning](https://semver.org); Claude Code only offers an update when `version` in `.claude-plugin/plugin.json` changes.
 
+## [Unreleased]
+
+### Fixed
+
+- A read-only task (a review or report, no file edits) no longer fails as "worker changed nothing". Without a verify command, an attempt that changed no files goes to the verifier, which judges the worker's report against the acceptance criteria. Finish prints that report, since nothing else carries it back. With a verify command, an empty diff still fails.
+- `directReason` said the context was "above 150000" even when it was not. It now says above or not above the threshold.
+
 ## [0.1.5] - 2026-10-20
 
 ### Changed
