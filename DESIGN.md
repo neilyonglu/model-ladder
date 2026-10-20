@@ -101,6 +101,7 @@ Changing tier may land on a lower effort (sonnet/high → opus/low). A tier chan
 
 ```text
 Skill (main session)
+  0. ladder or direct               → small task in a large session: do it directly, stop
   1. node scripts/preflight.mjs     → READY + workflowArgs, or a status that needs the user
   2. Workflow model-ladder:ladder   → route, then attempts → VERIFIED | FAILED | STOPPED
                                        (or NEEDS_INPUT: ask, call again)
@@ -108,6 +109,25 @@ Skill (main session)
 ```
 
 Everything deterministic lives in the scripts, so the main session makes about five model calls per run whatever the task. Workflow scripts cannot touch the filesystem, which is why file work sits outside the workflow.
+
+### 0. Ladder or direct (provisional)
+
+The orchestration runs in the calling session, so each of its model calls re-reads that session's whole context. Its cost is not fixed: it grows with the caller's context. In a long session (2026-10-20, a forge session past 400k tokens) one orchestration turn can cost more than a whole worker attempt, and a small task leaves little for a cheaper worker to save.
+
+So `/model-ladder:run` first checks two things and skips the ladder when both hold:
+
+| | Small context | Large context (above ~150k tokens) |
+|---|---|---|
+| Small task (one or two files, design given) | ladder | direct |
+| Larger task | ladder | ladder |
+
+`--ladder` at the start of the task forces the ladder. The skill cannot read its own token count, so the model estimates it; the thresholds are a starting guess, not a measurement.
+
+To calibrate later:
+
+1. Record the main session's orchestration cost in `history.jsonl`; today it holds only route and attempt output tokens.
+2. Run the same tasks through the ladder from a fresh session and from a long one, and directly with sonnet/high and opus.
+3. Group tasks by size (files changed, output tokens) and find where the ladder and direct lines cross for each context size.
 
 ### 1. Preflight
 

@@ -10,7 +10,20 @@ effort: medium
 
 Task: $ARGUMENTS
 
-If the task is empty, ask the user for it and stop. You only orchestrate: never edit the task's code yourself. Run commands from the repository root. Scripts print JSON or a report; act on them exactly as below.
+If the task is empty, ask the user for it and stop. On the ladder path you only orchestrate: never edit the task's code yourself. Run commands from the repository root. Scripts print JSON or a report; act on them exactly as below.
+
+## 0. Ladder or direct
+
+If the task starts with `--ladder`, drop that flag from the task and go to step 1.
+
+Otherwise do the task directly, without the ladder, when both hold:
+
+- Small task: it touches one or two files and the design is already given, for example "implement this function as described".
+- Large context: this session's context is above about 150k tokens.
+
+In that case tell the user in one line: "Small task in a large session: doing it directly costs less than the ladder. Rerun with `--ladder` to force the ladder." Then do the task yourself, check it with the project's build or tests, and stop. Skip preflight and finish.
+
+Otherwise go to step 1.
 
 ## 1. Preflight
 

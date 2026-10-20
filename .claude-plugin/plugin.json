@@ -1,6 +1,6 @@
 {
   "name": "model-ladder",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Run a coding task on the cheapest model and effort likely to succeed, verify it, and escalate on failure.",
   "author": { "name": "neilyonglu" }
 }

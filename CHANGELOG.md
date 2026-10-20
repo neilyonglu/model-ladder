@@ -2,6 +2,12 @@
 
 All notable changes to model-ladder. Versions follow [semantic versioning](https://semver.org); Claude Code only offers an update when `version` in `.claude-plugin/plugin.json` changes.
 
+## [0.1.4] - 2026-10-20
+
+### Added
+
+- `/model-ladder:run` skips the ladder for a small task (one or two files, design given) in a large session (above about 150k tokens of context), and does the task directly, because orchestration cost grows with the caller's context. `--ladder` forces the ladder. The thresholds are provisional; see DESIGN.md.
+
 ## [0.1.3] - 2026-10-20
 
 ### Fixed
@@ -26,6 +32,7 @@ All notable changes to model-ladder. Versions follow [semantic versioning](https
 
 First release: cheap-first model × effort ladder for Claude Code, with a router, isolated worktree attempts, a verifier, protected tests, and history. Includes path matching that works with Windows 8.3 short names.
 
+[0.1.4]: https://github.com/neilyonglu/model-ladder/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/neilyonglu/model-ladder/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/neilyonglu/model-ladder/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/neilyonglu/model-ladder/compare/v0.1.0...v0.1.1
