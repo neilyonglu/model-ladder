@@ -2,6 +2,16 @@
 
 All notable changes to model-ladder. Versions follow [semantic versioning](https://semver.org); Claude Code only offers an update when `version` in `.claude-plugin/plugin.json` changes.
 
+## [0.1.7] - 2026-10-20
+
+### Changed
+
+- The ladder-or-direct context threshold is 300k tokens, up from 150k.
+
+### Fixed
+
+- The acceptance prompt could still arrive as one flat paragraph, because the skill left the layout to the model. The workflow now returns `acceptanceMessage` (the start cell and a numbered criteria list) and a short `acceptanceQuestion`; the skill prints and asks them verbatim.
+
 ## [0.1.6] - 2026-10-20
 
 ### Changed
