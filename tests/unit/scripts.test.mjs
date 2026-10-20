@@ -192,6 +192,16 @@ test('FAILED: worktrees removed, kept only with keepFailed', () => {
   assert.ok(existsSync(kept))
 })
 
+test('DIRECT: nothing applied, guard disarmed, history says DIRECT', () => {
+  const dir = repo()
+  preflight(dir)
+  const out = finish(dir, { task: 't', result: { status: 'DIRECT', plan: { goal: 'g', directReason: 'one function' }, attempts: [], tokens: 10 } })
+  assert.match(out, /DIRECT/)
+  assert.match(out, /one function/)
+  assert.ok(!existsSync(join(dir, '.model-ladder', 'run.json')))
+  assert.equal(JSON.parse(read(dir, '.model-ladder/history.jsonl').trim()).status, 'DIRECT')
+})
+
 test('aborted or crashed runs still disarm the guard', () => {
   const dir = repo()
   preflight(dir)

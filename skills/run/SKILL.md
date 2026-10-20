@@ -12,19 +12,6 @@ Task: $ARGUMENTS
 
 If the task is empty, ask the user for it and stop. On the ladder path you only orchestrate: never edit the task's code yourself. Run commands from the repository root. Scripts print JSON or a report; act on them exactly as below.
 
-## 0. Ladder or direct
-
-If the task starts with `--ladder`, drop that flag from the task and go to step 1.
-
-Otherwise do the task directly, without the ladder, when both hold:
-
-- Small task: it touches one or two files and the design is already given, for example "implement this function as described".
-- Large context: this session's context is above about 150k tokens.
-
-In that case tell the user in one line: "Small task in a large session: doing it directly costs less than the ladder. Rerun with `--ladder` to force the ladder." Then do the task yourself, check it with the project's build or tests, and stop. Skip preflight and finish.
-
-Otherwise go to step 1.
-
 ## 1. Preflight
 
 Run `node "${CLAUDE_PLUGIN_ROOT}/scripts/preflight.mjs"` and act on `status`:
@@ -35,13 +22,18 @@ Run `node "${CLAUDE_PLUGIN_ROOT}/scripts/preflight.mjs"` and act on `status`:
 
 ## 2. Workflow
 
-Call the Workflow tool with name `model-ladder:ladder` and args `{ "task": "<task>", ...workflowArgs }` (a JSON object, not a string).
+Call the Workflow tool with name `model-ladder:ladder` and args `{ "task": "<task>", "contextTokens": <estimate>, "forceLadder": <bool>, ...workflowArgs }` (a JSON object, not a string).
+
+- `contextTokens`: your estimate of this session's current context size in tokens. The router weighs it against the task: orchestration re-reads this context on every turn.
+- `forceLadder`: true when the task starts with `--ladder`; drop that flag from the task.
 
 If it returns `status: "NEEDS_INPUT"`:
 
 - `plan.question` is set: ask it. On an answer, call again with the task plus `\nClarification: <answer>`.
 - `plan.needsAcceptance` is true: there is no verify step, so the user decides what done means. Show `plan.acceptance` as a proposal and ask them to confirm it or give their own criteria, one per line. Call again with the same args plus `"plan": <plan with acceptance set to their criteria>`.
 - If the user declines either, go to step 3 with `{ "task": "<task>", "aborted": "<why>" }`.
+
+If it returns `status: "DIRECT"`, the router judged the task small and this session too large for the ladder to pay off. Go to step 3 with that result.
 
 If the Workflow call itself fails, go to step 3 with `{ "task": "<task>", "error": "<the error>" }`.
 
@@ -55,4 +47,4 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/finish.mjs" <<'EOF'
 EOF
 ```
 
-Print its output verbatim as your final message, in a `text` code block, and nothing else.
+Print its output verbatim in a `text` code block. If the result was `DIRECT`, then do the task yourself, check it with the project's build or tests, and report what changed. Otherwise the printed output is your final message, with nothing else.

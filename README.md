@@ -147,7 +147,7 @@ Either way, the end of a model-ladder report tells you when a newer version is o
 /model-ladder:run <task>
 ```
 
-A small task (one or two files, with the design already written) in a long session (above about 150k tokens of context) is done directly, without the ladder: orchestration re-reads the session's context, so in a long session it costs more than a cheaper worker saves. Start the task with `--ladder` to force the ladder:
+A small task (one or two files, with the design already written) in a long session (above about 150k tokens of context) is done directly, without the ladder: orchestration re-reads the session's context, so in a long session it costs more than a cheaper worker saves. The router makes this call after reading the code. Start the task with `--ladder` to force the ladder:
 
 ```text
 /model-ladder:run --ladder <task>

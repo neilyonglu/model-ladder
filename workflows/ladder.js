@@ -47,6 +47,14 @@ function pickMove(choice, cell, tiers) {
   return match ?? moves[0] ?? null
 }
 
+// Orchestration re-reads the caller's context on every turn; past this size a small task costs
+// less done directly. Provisional: see DESIGN.md › Ladder or direct.
+const LARGE_CONTEXT = 150000
+
+function isDirect(small, contextTokens, forceLadder) {
+  return !forceLadder && small && (contextTokens ?? 0) > LARGE_CONTEXT
+}
+
 function isCell(choice, tiers) {
   return tiers.some((tier) => tier.model === choice?.model && tier.efforts.includes(choice?.effort))
 }
@@ -68,8 +76,10 @@ const ROUTE_SCHEMA = {
     allowTests: { type: 'boolean' },
     allowTestsReason: { type: 'string' },
     question: { type: ['string', 'null'] },
+    small: { type: 'boolean' },
+    smallReason: { type: 'string' },
   },
-  required: ['model', 'effort', 'reason', 'goal', 'scope', 'verify', 'acceptance', 'allowTests', 'allowTestsReason', 'question'],
+  required: ['model', 'effort', 'reason', 'goal', 'scope', 'verify', 'acceptance', 'allowTests', 'allowTestsReason', 'question', 'small', 'smallReason'],
 }
 
 const WORKER_SCHEMA = {
@@ -153,7 +163,9 @@ Also return:
 - verify: ${verifyKnown}
 - acceptance: checkable done criteria, one per item. ${args.acceptance?.length ? 'The user already gave them; return them unchanged.' : 'Empty if the verify command alone defines done.'}
 - allowTests: true only when the task itself is to write or change tests. A bug fix is not: the tests define the expected behavior.
-- question: if the task is too vague to act on (no clear outcome, several very different readings), the one question that would settle it. Otherwise null. A worker would guess, and passing tests would hide the guess.`
+- question: if the task is too vague to act on (no clear outcome, several very different readings), the one question that would settle it. Otherwise null. A worker would guess, and passing tests would hide the guess.
+- small: true when the task touches one or two files and its design is already given (for example "implement this function as described"), so a capable model would finish it in one pass. Otherwise false.
+- smallReason: one sentence on why.`
   const { result: r, error, tokens } = await measured(prompt, {
     label: 'route', phase: 'Route', schema: ROUTE_SCHEMA, agentType: 'model-ladder:router', ...config.router,
   })
@@ -173,6 +185,8 @@ Also return:
     allowTestsReason: r.allowTestsReason,
     protected: protectedPatterns(args.protection, r.allowTests),
     question: r.question,
+    direct: isDirect(r.small === true, args.contextTokens, args.forceLadder),
+    directReason: `${r.smallReason} The calling session holds about ${args.contextTokens} tokens of context, above ${LARGE_CONTEXT}.`,
     // Without a verify step the user, not the router, decides what done means.
     needsAcceptance: !verify && !args.acceptance?.length,
     routeTokens: tokens,
@@ -353,5 +367,9 @@ if (!args?.task || !args?.config || !args?.protection) {
 // One call routes and runs. It returns early only when the user must answer first;
 // the skill then calls again with `plan` (criteria filled in) or a clarified task.
 const plan = args.plan ?? (await route())
+// The caller does a small task itself when its own context makes orchestration the bigger cost.
+if (!args.plan && plan.direct) {
+  return { status: 'DIRECT', plan: { goal: plan.goal, directReason: plan.directReason }, attempts: [], tokens: plan.routeTokens }
+}
 if (!args.plan && (plan.question || plan.needsAcceptance)) return { status: 'NEEDS_INPUT', plan }
 return await run(plan)

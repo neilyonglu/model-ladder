@@ -108,6 +108,10 @@ function main(input) {
     notes.push('Tip: add `.model-ladder/` and `.claude/worktrees/` to .gitignore.')
   }
 
+  if (result?.status === 'DIRECT') {
+    return [`model-ladder ── DIRECT`, '', `Task      ${task}`, `Why       ${result.plan.directReason}`,
+      'Next      The calling session does the task itself. Start the task with --ladder to force the ladder.', ...notes.flatMap((n) => ['', n])].join('\n')
+  }
   if (error) return [`model-ladder ── ERROR`, '', `Task      ${task}`, `Error     ${error}`, '', 'Worktrees and the run marker were cleaned up.', ...notes].join('\n')
   return report(task, result, outcome, notes)
 }

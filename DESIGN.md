@@ -101,27 +101,29 @@ Changing tier may land on a lower effort (sonnet/high → opus/low). A tier chan
 
 ```text
 Skill (main session)
-  0. ladder or direct               → small task in a large session: do it directly, stop
   1. node scripts/preflight.mjs     → READY + workflowArgs, or a status that needs the user
   2. Workflow model-ladder:ladder   → route, then attempts → VERIFIED | FAILED | STOPPED
-                                       (or NEEDS_INPUT: ask, call again)
+                                       (or NEEDS_INPUT: ask, call again;
+                                        or DIRECT: the skill does the task itself after finish)
   3. node scripts/finish.mjs        → apply, cleanup, history, report text
 ```
 
 Everything deterministic lives in the scripts, so the main session makes about five model calls per run whatever the task. Workflow scripts cannot touch the filesystem, which is why file work sits outside the workflow.
 
-### 0. Ladder or direct (provisional)
+### Ladder or direct (provisional)
 
 The orchestration runs in the calling session, so each of its model calls re-reads that session's whole context. Its cost is not fixed: it grows with the caller's context. In a long session (2026-10-20, a forge session past 400k tokens) one orchestration turn can cost more than a whole worker attempt, and a small task leaves little for a cheaper worker to save.
 
-So `/model-ladder:run` first checks two things and skips the ladder when both hold:
+So the workflow skips the ladder, returning `DIRECT`, when both hold:
 
 | | Small context | Large context (above ~150k tokens) |
 |---|---|---|
 | Small task (one or two files, design given) | ladder | direct |
 | Larger task | ladder | ladder |
 
-`--ladder` at the start of the task forces the ladder. The skill cannot read its own token count, so the model estimates it; the thresholds are a starting guess, not a measurement.
+Only the calling session knows its context size, so the skill estimates it and passes it as `contextTokens`. The router reads the code and returns `small`. The threshold itself is code (`LARGE_CONTEXT` in `workflows/ladder.js`): a first version let the router weigh `contextTokens`, and in a real run sonnet/low called a prompt that said "about 500000 tokens" an unknown context size. On `DIRECT` the workflow stops before any worker, finish disarms the guard and records the run, and the skill then does the task itself. `--ladder` at the start of the task passes `forceLadder`, which overrides the verdict. A direct case still costs one router call. The thresholds are a starting guess, not a measurement.
+
+0.1.4 made this check in the skill before preflight; 0.1.5 moved the task half into the router, which reads the code instead of guessing from the task text.
 
 To calibrate later:
 

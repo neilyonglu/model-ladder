@@ -159,7 +159,7 @@ test('the top cell gives up without a diagnose call', async () => {
 
 const routed = {
   model: 'sonnet', effort: 'medium', reason: 'r', goal: 'g', scope: [], verify: 'uv run pytest',
-  acceptance: [], allowTests: false, allowTestsReason: 'bug fix', question: null,
+  acceptance: [], allowTests: false, allowTestsReason: 'bug fix', question: null, small: false, smallReason: '',
 }
 const routeThenPass = (r, extra) => call([
   { label: 'route', result: r }, { label: 'worker', result: done }, { label: 'verify', result: pass },
@@ -211,6 +211,25 @@ test('called directly without the skill, it points to /model-ladder:run', async 
   const h = harness([])
   await assert.rejects(body(undefined, h.agent, h.budget, () => {}, () => {}), /Run \/model-ladder:run <task> instead/)
   await assert.rejects(body({ task: 't' }, h.agent, h.budget, () => {}, () => {}), /internal engine/)
+})
+
+test('a small task in a large session comes back DIRECT, before any worker', async () => {
+  const { out } = await routeOnly({ ...routed, small: true, smallReason: 'one function' }, { contextTokens: 300000 })
+  assert.equal(out.status, 'DIRECT')
+  assert.match(out.plan.directReason, /one function/)
+  assert.match(out.plan.directReason, /300000/)
+  assert.deepEqual(out.attempts, [])
+})
+
+test('a small task in a small session, or a large task anywhere, still runs the ladder', async () => {
+  assert.equal((await routeThenPass({ ...routed, small: true }, { contextTokens: 50000 })).out.status, 'VERIFIED')
+  assert.equal((await routeThenPass({ ...routed, small: false }, { contextTokens: 300000 })).out.status, 'VERIFIED')
+  assert.equal((await routeThenPass({ ...routed, small: true })).out.status, 'VERIFIED')
+})
+
+test('forceLadder overrides DIRECT', async () => {
+  const { out } = await routeThenPass({ ...routed, small: true }, { contextTokens: 300000, forceLadder: true })
+  assert.equal(out.status, 'VERIFIED')
 })
 
 test('a router that fails to report stops the run', async () => {

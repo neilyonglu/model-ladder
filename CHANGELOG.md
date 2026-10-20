@@ -2,6 +2,12 @@
 
 All notable changes to model-ladder. Versions follow [semantic versioning](https://semver.org); Claude Code only offers an update when `version` in `.claude-plugin/plugin.json` changes.
 
+## [0.1.5] - 2026-10-20
+
+### Changed
+
+- The ladder-or-direct check moved out of the skill text: the skill passes its estimated context size as `contextTokens`, the router judges after reading the code whether the task is small, and the workflow returns `DIRECT` when it is and the context is above 150k tokens (a fixed threshold in code). Finish records it, and the skill then does the task itself. `--ladder` still forces the ladder.
+
 ## [0.1.4] - 2026-10-20
 
 ### Added
@@ -32,6 +38,7 @@ All notable changes to model-ladder. Versions follow [semantic versioning](https
 
 First release: cheap-first model × effort ladder for Claude Code, with a router, isolated worktree attempts, a verifier, protected tests, and history. Includes path matching that works with Windows 8.3 short names.
 
+[0.1.5]: https://github.com/neilyonglu/model-ladder/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/neilyonglu/model-ladder/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/neilyonglu/model-ladder/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/neilyonglu/model-ladder/compare/v0.1.1...v0.1.2
