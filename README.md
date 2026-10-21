@@ -9,15 +9,17 @@
 [![release](https://img.shields.io/github/v/release/neilyonglu/model-ladder?label=release&color=blue)](CHANGELOG.md)
 [![node](https://img.shields.io/badge/node-%E2%89%A520-339933?logo=nodedotjs&logoColor=white)](https://nodejs.org)
 [![license: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![vs opus/xhigh](https://img.shields.io/badge/vs%20opus%2Fxhigh-42%25%20cheaper-brightgreen)](#-is-it-worth-it-for-you)
+[![vs opus/xhigh](https://img.shields.io/badge/vs%20opus%2Fxhigh-42%25%20cheaper-brightgreen)](#-is-it-worth-it-for-you-claude-code)
 
-[Install](#-install) · [Use](#-use) · [How it works](#-how-it-works) · [Benchmark](#-is-it-worth-it-for-you) · [Configure](#-configure) · [Design](DESIGN.md)
+[Claude Code install](#-install-claude-code) · [Claude Code use](#-use-claude-code) · [Codex](#codex) · [How it works](#-how-it-works) · [Claude Code benchmark](#-is-it-worth-it-for-you-claude-code) · [Claude Code configure](#-configure-claude-code) · [Design](DESIGN.md)
 
 </div>
 
 ---
 
 model-ladder is a plugin for coding agents. The same plugin package runs on [Claude Code](https://code.claude.com) and Codex. It runs your task on a cheap model at low effort in an isolated git worktree, checks the result with your own tests, and moves up a model × effort grid only when an attempt fails. A router decides each move from what actually went wrong, and code makes sure it only ever moves up.
+
+Claude Code example:
 
 ```text
 /model-ladder:run Fix the typo in the welcome message
@@ -49,6 +51,25 @@ codex plugin add model-ladder@model-ladder
 ```
 
 For a local checkout, replace `neilyonglu/model-ladder` with the checkout's absolute path. Restart the Codex session after installation, then invoke the `model-ladder` skill with your task. The skill resolves its runner from its own installed path. Node 20+, Git and an authenticated native `codex` executable must be available on PATH. Set `CODEX_BINARY` to an absolute native executable path when needed. No separate package, proxy or API key is required.
+
+### Use ladder by default in Codex
+
+Installing the plugin makes the skill available. To make it the default for coding tasks across your repositories, add the following to `~/.codex/AGENTS.md` (or `$CODEX_HOME/AGENTS.md` if you use a custom profile). Preserve any existing instructions.
+
+```text
+For top-level coding tasks in a Git repository, use the installed model-ladder
+skill by default, unless I explicitly ask to skip it. Read its SKILL.md from
+the path supplied by Codex and run its packaged runner.
+For an internal model-ladder role, perform only the assigned role; never invoke
+ladder recursively. Handle conversation, status and ladder setup directly.
+Keep approval and sandbox controls. Ask for dirty-change consent as the skill
+requires. If ladder is unavailable or blocked, report the blocker instead of
+silently doing the task directly. Never invent acceptance criteria or approval.
+```
+
+Restart Codex after changing global instructions. This is an instruction-based default, subject to higher-priority and project instructions. It does not replace the parent session's model or guarantee that every message launches a ladder run. See [OpenAI's AGENTS.md guide](https://learn.chatgpt.com/docs/agent-configuration/agents-md).
+
+### Run the Codex runner directly
 
 The runner can also be called directly from the target repository:
 
@@ -120,7 +141,7 @@ Keep the Codex router and semantic verifier on `gpt-6.1-sol/low` for now. This i
 - **Safe by default.** Every attempt runs in a throwaway worktree. Nothing is committed unless you ask, and nothing is ever pushed.
 - **Tunable per project.** One optional JSON file sets the grid, and every run is logged so you can see where it climbs.
 
-## 📊 Is it worth it for you?
+## 📊 Is it worth it for you? (Claude Code)
 
 Seven small tasks (from a typo to "implement this spec"), one run each, list-price cost reported by Claude Code:
 
@@ -151,7 +172,7 @@ flowchart LR
     D -- environment or<br/>unclear task --> S([Stop and explain])
 ```
 
-The grid it climbs:
+The Claude Code grid it climbs (see the Codex section for its model IDs):
 
 ```text
           low   medium   high   xhigh
@@ -162,13 +183,15 @@ opus       ●      ●       ●       ●
 
 A move only goes up: a higher effort within the same model (opus one step at a time), or the next model at any effort. It never skips from haiku straight to opus.
 
+Claude Code roles:
+
 | Role | Runs on | Does |
 |---|---|---|
 | Router | sonnet / low, read-only | Picks the start, finds your verify step, diagnoses each failure |
 | Worker | the current cell | Implements the task in a fresh git worktree |
 | Verifier | haiku / low | Checks protected files, runs your tests |
 
-## 📦 Install
+## 📦 Install (Claude Code)
 
 ```text
 /plugin marketplace add neilyonglu/model-ladder
@@ -213,7 +236,7 @@ claude plugin update model-ladder@model-ladder
 
 Either way, the end of a model-ladder report tells you when a newer version is out. What changed in each version: [CHANGELOG.md](CHANGELOG.md). To get notified on GitHub, **Watch** → **Custom** → **Releases**.
 
-## 🚀 Use
+## 🚀 Use (Claude Code)
 
 ```text
 /model-ladder:run <task>
@@ -232,7 +255,7 @@ model-ladder asks before it acts when:
 - the repo has no tests for the task, so you confirm what "done" means,
 - `CLAUDE_CODE_EFFORT_LEVEL` or `CLAUDE_CODE_SUBAGENT_MODEL_FORCE` is set, since either overrides every attempt's model or effort.
 
-## 🔧 Configure
+## 🔧 Configure (Claude Code)
 
 Optional, per project: `.claude/model-ladder.json`. Each key you set replaces its default.
 
@@ -271,13 +294,13 @@ Every run appends a line to `.model-ladder/history.jsonl`: which cells were trie
 ## 🛡️ Safety
 
 - Workers run in throwaway git worktrees. Only a verified change reaches your working tree, and it is never committed unless `commit` is true. Nothing is ever pushed.
-- Workers may not touch tests unless the task is about tests, and never the ladder config. A hook blocks such edits as they happen, and the verifier rejects any that slip through.
+- Workers may not touch tests unless the task is about tests, and never the ladder config. Claude Code blocks such edits with a hook and checks them again in verification. Codex rejects protected changes before verification and patch application.
 - If you edit the same files while a run is going, the change is not forced in; the worktree and patch are kept and the report says where.
 
 ## ⚠️ Limitations
 
 - Claude Code and Codex use separate runtime settings within the same plugin package.
-- Orchestration costs about one session per run regardless of task size.
+- Claude Code orchestration costs about one session per run regardless of task size.
 - Token counts in the report cover the router, workers and verifier, not the orchestrating session.
 - The benchmark is seven small tasks with one run each.
 
