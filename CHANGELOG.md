@@ -2,6 +2,20 @@
 
 All notable changes to model-ladder. Versions follow [semantic versioning](https://semver.org); Claude Code only offers an update when `version` in `.claude-plugin/plugin.json` changes.
 
+## [1.0.0] - 2026-10-21
+
+### Added
+
+- Codex support in the same model-ladder plugin package, with a native skill, marketplace metadata, configurable model grid and standalone Node runner.
+- Independent worktree attempts, command/acceptance verification, legal escalation, protected-file checks, dirty snapshot preservation, bounded logs and conflict recovery for Codex.
+- Fake-CLI integration checks using real Git repositories and a generated shared rule module with drift detection.
+- Documented model-selection rationale and local validation results: 91 offline tests passed, native Codex installation and a controlled read-only flow passed. Native write validation remains blocked by the local Windows sandbox ACL setup.
+
+### Fixed
+
+- Acquire the shared Claude Code/Codex run marker atomically before snapshotting.
+- Preserve exact patch bytes, protect selected verification inputs including npm workspace scripts, permit verification build artifacts, and stop on unsupported-model errors.
+
 ## [0.1.7] - 2026-10-20
 
 ### Changed
@@ -60,6 +74,7 @@ All notable changes to model-ladder. Versions follow [semantic versioning](https
 
 First release: cheap-first model × effort ladder for Claude Code, with a router, isolated worktree attempts, a verifier, protected tests, and history. Includes path matching that works with Windows 8.3 short names.
 
+[1.0.0]: https://github.com/neilyonglu/model-ladder/compare/v0.1.7...v1.0.0
 [0.1.6]: https://github.com/neilyonglu/model-ladder/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/neilyonglu/model-ladder/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/neilyonglu/model-ladder/compare/v0.1.3...v0.1.4

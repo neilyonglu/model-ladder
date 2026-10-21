@@ -222,3 +222,16 @@ test('aborted or crashed runs still disarm the guard', () => {
   assert.match(finish(dir, { task: 't', error: 'workflow crashed' }), /ERROR/)
   assert.ok(!existsSync(join(dir, '.model-ladder', 'run.json')))
 })
+
+test('preflight snapshot failure releases its own marker and temporary index', () => {
+  const dir = repo()
+  write(dir, '.gitattributes', '*.py filter=broken\n')
+  write(dir, 'a.py', 'changed\n')
+  git(dir, 'config', 'filter.broken.clean', 'exit 1')
+  git(dir, 'config', 'filter.broken.required', 'true')
+  const out = preflight(dir, '--allow-dirty')
+  assert.equal(out.status, 'ERROR')
+  assert.match(out.message, /filter.*failed|clean filter/)
+  assert.equal(existsSync(join(dir, '.model-ladder/run.json')), false)
+  assert.equal(existsSync(join(dir, '.model-ladder/index')), false)
+})

@@ -4,8 +4,12 @@ import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { compareVersions } from '../../scripts/update-check.mjs'
 
-const PLUGIN_PATHS = ['.claude-plugin', 'skills', 'agents', 'hooks', 'scripts', 'workflows']
+const PLUGIN_PATHS = ['.claude-plugin', '.codex-plugin', '.agents/plugins', 'codex-skills', 'skills', 'agents', 'hooks', 'scripts', 'workflows']
 const git = (...args) => execFileSync('git', args, { encoding: 'utf8' }).trim()
+
+const claude = JSON.parse(readFileSync('.claude-plugin/plugin.json', 'utf8'))
+const codex = JSON.parse(readFileSync('.codex-plugin/plugin.json', 'utf8'))
+if (claude.name !== codex.name || claude.version !== codex.version) throw new Error('Claude Code and Codex plugin identity/version must match')
 
 let tag
 try {

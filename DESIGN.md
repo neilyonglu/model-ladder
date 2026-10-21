@@ -1,8 +1,8 @@
 # model-ladder — Design
 
-A Claude Code plugin that runs a coding task on the cheapest model and effort likely to succeed, verifies the result, and escalates on failure. A router model picks the starting point and diagnoses each failure; code enforces the escalation rules.
+A plugin for Claude Code and Codex that runs a coding task on the cheapest model and effort likely to succeed, verifies the result, and escalates on failure. A router model picks the starting point and diagnoses each failure; code enforces the escalation rules.
 
-Status: v0.1 implemented. 45 unit tests, 11 end-to-end scenarios and a 21-run benchmark pass (see [Testing](#testing)).
+Status: v1.0.0 supports both runtimes. All 91 offline tests pass. The Claude end-to-end scenarios and benchmark below are historical results; native Codex write validation remains blocked by the local Windows sandbox ACL setup. See [README validation](README.md#local-validation-on-2026-10-21).
 
 ## Goals
 
@@ -11,7 +11,7 @@ Status: v0.1 implemented. 45 unit tests, 11 end-to-end scenarios and a 21-run be
 - Never leave the user's branch half-finished or touch their uncommitted work.
 - Install with two commands; no proxy, no API keys, works on a Claude subscription.
 
-Non-goals for v1: other agents (Codex, Gemini), parallel attempts (best-of-N), cost in dollars.
+Non-goals: Gemini, parallel attempts (best-of-N), cost in dollars.
 
 ## Repository layout
 
@@ -284,7 +284,7 @@ Claude Code offers a plugin update only when `version` in `.claude-plugin/plugin
 
 ### Unit tests
 
-`node --test "tests/unit/*.test.mjs"` (45 tests, no dependencies):
+`node --test "tests/unit/*.test.mjs"` (91 tests, no dependencies or model calls):
 
 - `moves`: legal moves per tier, jump caps, tier changes, top cell, fallbacks, protection lists.
 - `flow`: the workflow body run against a scripted fake `agent()`: escalation paths, illegal choices, dead, blocked and throwing agents, stops, verifier model choice, worker type, `NEEDS_INPUT`, verify precedence.
@@ -361,3 +361,15 @@ Each of these was found by a real run, not by the unit tests:
 ## Credits
 
 The brief format and the "verifier on a fresh context" rule are adapted from [pstack](https://github.com/michael-denyer/pstack-claude) (MIT).
+
+## Codex runtime
+
+The package exposes Claude Code and Codex manifests with the same name and version. Codex discovers only codex-skills/, while Claude retains skills/, agents/, hooks/ and its Workflow entry. The standalone Node Codex runner owns route, attempt, verification, diagnosis and incremental patch application. It invokes native codex exec with argument arrays, stdin, explicit model/effort, JSON schemas, ephemeral sessions and read-only or workspace-write sandboxes. It never disables approval or sandbox controls.
+
+The pure block in workflows/ladder.js is canonical. scripts/sync-rules.mjs generates scripts/ladder-rules.mjs for Node imports. A unit check rejects drift. This keeps Claude's import-free Workflow unchanged while both runtimes enforce the same cell legality and upward moves.
+
+Each run has a UUID directory, temporary Git indexes and an explicit list of created worktrees. Both runtimes atomically acquire .model-ladder/run.json before snapshotting. Codex diffs actual Git trees against the approved dirty base tree, verifies protection before and after checks, then applies only the incremental patch. Failed attempts restart from that base and receive only the previous failure summaries. Dirty changes require consent. Read-only work also uses isolation so the original index and checkout are untouched. Cleanup never discovers ownership by subtracting before/after worktree lists.
+
+Test commands come from trusted project configuration or deterministic discovery. Existing project verify skills take precedence over discovery. Semantic acceptance is checked by a separate read-only Codex invocation. No check and no explicit acceptance returns NEEDS_INPUT. Model output is validated against strict schemas before orchestration uses it. Operational model/auth/sandbox failures stop instead of escalating. Each invocation keeps bounded event and stderr logs; results record actual reported usage without estimating price.
+
+The integration tests use a native Node fake Codex process and real temporary Git repositories to exercise command arguments, schemas, test failure and escalation, tampering, dirty state, conflicts, timeouts and cleanup. Real-account smoke tests are separate because model availability, authentication and Windows sandbox setup are machine-specific.

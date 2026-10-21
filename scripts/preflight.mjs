@@ -78,39 +78,46 @@ function main(flags) {
     .split('\n').filter(Boolean).map((l) => l.slice(3))
   if (dirtyFiles.length && !flags.has('--allow-dirty')) return { status: 'DIRTY', files: dirtyFiles }
 
-  let baseTree = git(root, 'rev-parse', 'HEAD^{tree}')
-  let setupPatch = null
-  let setupFiles = []
-  if (dirtyFiles.length) {
-    // Snapshot through a temporary index so the user's real index is untouched.
-    const env = { ...process.env, GIT_INDEX_FILE: join(run, 'index') }
-    const g = (...a) => execGit(root, env, a)
-    g('read-tree', 'HEAD')
-    // Not `add -- . ':!.model-ladder'`: git rejects an exclude pathspec that names an ignored path.
-    g('add', '-A')
-    // -f: when the run dir is not ignored, `add -A` stages this temporary index while git is still writing it.
-    g('rm', '-r', '-q', '-f', '--cached', '--ignore-unmatch', '--', '.model-ladder', '.claude/worktrees')
-    baseTree = g('write-tree').trim()
-    setupPatch = join(run, 'setup.patch')
-    writeFileSync(setupPatch, g('diff', '--cached', '--binary', 'HEAD'))
-    setupFiles = g('diff', '--cached', '--name-only', 'HEAD').split('\n').filter(Boolean)
-    rmSync(join(run, 'index'), { force: true })
-  }
-
   const protection = { always: [...ALWAYS_PROTECTED, ...config.protected], tests: TEST_PATTERNS }
-  writeFileSync(join(run, 'state.json'), JSON.stringify({ baseTree, before: worktrees(root).map((w) => w.path), config }, null, 2))
-  writeFileSync(marker, JSON.stringify({ protected: protection.always, tests: protection.tests }))
+  writeFileSync(marker, JSON.stringify({ protected: protection.always, tests: protection.tests }), { flag: 'wx' })
 
-  return {
-    status: 'READY',
-    workflowArgs: {
-      config,
-      protection,
-      baseCommit: head.out,
-      hasVerifySkill: existsSync(join(root, '.claude', 'skills', 'verify', 'SKILL.md')),
-      setupPatch,
-      setupFiles,
-    },
+  try {
+    let baseTree = git(root, 'rev-parse', 'HEAD^{tree}')
+    let setupPatch = null
+    let setupFiles = []
+    if (dirtyFiles.length) {
+      // Snapshot through a temporary index so the user's real index is untouched.
+      const env = { ...process.env, GIT_INDEX_FILE: join(run, 'index') }
+      const g = (...a) => execGit(root, env, a)
+      g('read-tree', 'HEAD')
+      // Not `add -- . ':!.model-ladder'`: git rejects an exclude pathspec that names an ignored path.
+      g('add', '-A')
+      // -f: when the run dir is not ignored, `add -A` stages this temporary index while git is still writing it.
+      g('rm', '-r', '-q', '-f', '--cached', '--ignore-unmatch', '--', '.model-ladder', '.claude/worktrees')
+      baseTree = g('write-tree').trim()
+      setupPatch = join(run, 'setup.patch')
+      writeFileSync(setupPatch, g('diff', '--cached', '--binary', 'HEAD'))
+      setupFiles = g('diff', '--cached', '--name-only', 'HEAD').split('\n').filter(Boolean)
+    }
+
+    writeFileSync(join(run, 'state.json'), JSON.stringify({ baseTree, before: worktrees(root).map((w) => w.path), config }, null, 2))
+
+    return {
+      status: 'READY',
+      workflowArgs: {
+        config,
+        protection,
+        baseCommit: head.out,
+        hasVerifySkill: existsSync(join(root, '.claude', 'skills', 'verify', 'SKILL.md')),
+        setupPatch,
+        setupFiles,
+      },
+    }
+  } catch (error) {
+    rmSync(marker, { force: true })
+    throw error
+  } finally {
+    rmSync(join(run, 'index'), { force: true })
   }
 }
 

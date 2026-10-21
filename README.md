@@ -17,7 +17,7 @@
 
 ---
 
-model-ladder is a plugin for coding agents. It runs on [Claude Code](https://code.claude.com) today; Codex support is planned. It runs your task on a cheap model at low effort in an isolated git worktree, checks the result with your own tests, and moves up a model × effort grid only when an attempt fails. A router decides each move from what actually went wrong, and code makes sure it only ever moves up.
+model-ladder is a plugin for coding agents. The same plugin package runs on [Claude Code](https://code.claude.com) and Codex. It runs your task on a cheap model at low effort in an isolated git worktree, checks the result with your own tests, and moves up a model × effort grid only when an attempt fails. A router decides each move from what actually went wrong, and code makes sure it only ever moves up.
 
 ```text
 /model-ladder:run Fix the typo in the welcome message
@@ -38,6 +38,78 @@ Changed   shop/messages.py
 Applied   to the working tree (not committed)
 Tokens    3228 output (route + attempts)
 ```
+
+## Codex
+
+The same repository contains both plugin manifests. Claude Code keeps its existing installation and `/model-ladder:run` command. In Codex CLI 0.160.1 or later, install the same package with:
+
+```sh
+codex plugin marketplace add neilyonglu/model-ladder
+codex plugin add model-ladder@model-ladder
+```
+
+For a local checkout, replace `neilyonglu/model-ladder` with the checkout's absolute path. Restart the Codex session after installation, then invoke the `model-ladder` skill with your task. The skill resolves its runner from its own installed path. Node 20+, Git and an authenticated native `codex` executable must be available on PATH. Set `CODEX_BINARY` to an absolute native executable path when needed. No separate package, proxy or API key is required.
+
+The runner can also be called directly from the target repository:
+
+```sh
+node /path/to/model-ladder/scripts/codex-run.mjs "Fix the greeting typo"
+```
+
+To supply acceptance criteria or consent to existing changes, pass JSON on stdin through your platform's literal-input support:
+
+```json
+{"task":"Fix the greeting typo","acceptance":["The greeting says Welcome"],"allowDirty":true}
+```
+
+Configure Codex separately in `.codex/model-ladder.json`. Defaults use the locally available model metadata checked for this release; availability depends on the account. An unavailable model, unsupported effort, authentication failure or sandbox failure stops the run. Replace the model IDs and efforts with ones your account exposes.
+
+```json
+{
+  "router": { "model": "gpt-6.1-sol", "effort": "low" },
+  "verifier": { "model": "gpt-6.1-sol", "effort": "low" },
+  "tiers": [
+    { "model": "gpt-6-luna", "efforts": ["low", "medium", "high"], "maxEffortJump": 2 },
+    { "model": "gpt-6.1-sol", "efforts": ["low", "medium", "high"], "maxEffortJump": 2 },
+    { "model": "gpt-6-astra", "efforts": ["low", "medium", "high", "xhigh"], "maxEffortJump": 1 }
+  ],
+  "maxAttempts": 4,
+  "verify": "npm test",
+  "protected": [],
+  "keepFailed": false,
+  "timeoutMs": 600000
+}
+```
+
+`verify` is an existing trusted project command, run by Node and judged by its exit status. Without it, Codex follows `.agents/skills/verify/SKILL.md` or `.claude/skills/verify/SKILL.md` when present; otherwise it discovers an existing npm, pytest, Cargo, Go, Maven or Make test command. If none exists, the user must supply explicit acceptance criteria before work begins. Additional criteria are checked independently by a read-only model. The router never invents a shell command to execute.
+
+Codex starts every attempt from the same commit plus the user's approved dirty snapshot. Tests and both ladder configuration files stay protected, except tests may change for test-writing tasks. Protection compares actual Git trees before and after verification, including tests the user had already edited. User staging stays unchanged. Read-only reports run in isolated read-only worktrees and return their full report without applying anything.
+
+Successful patches are applied to the working tree without committing or pushing. A conflicting patch is retained with its verified worktree. Cleanup removes only this run's worktrees. Both runtimes use the same exclusive run marker, so they cannot apply concurrent ladder runs in the same checkout. Inspect an abandoned `.model-ladder/run.json` before removing it. SIGINT, SIGTERM and per-command timeouts stop child process trees and release the marker. Result JSON, bounded CLI event/error logs, usage and history remain under `.model-ladder/`; add that directory to `.gitignore`.
+
+On Windows, the Codex workspace-write sandbox must be working before a worker can run. A host sandbox setup or ACL error stops the run; repair the Codex sandbox setup and retry. The runner does not weaken sandbox settings automatically.
+
+Codex protects npm scripts (including nested package manifests), npm configuration, and the selected verification skill directory. For other discovered verifiers, the selected build manifests are protected as whole files; edit those manifests outside a ladder run. Use `protected` for custom verification helpers outside conventional test paths.
+
+Run `node --test tests/unit/*.test.mjs` for offline integration checks. Run `node tests/e2e/codex-smoke.mjs` only when you want a real authenticated model call; it creates a temporary Git fixture, verifies the fix and preserves failed runs for inspection. Optional `MODEL_LADDER_SMOKE_MODEL` and `MODEL_LADDER_SMOKE_EFFORT` select an available cell.
+
+The Claude benchmark below measures Claude only. Codex costs and the Claude parent-context DIRECT shortcut are not inferred from it.
+
+### Model selection reviewed on 2026-10-21
+
+The following comparison matches product positioning, not equal performance. Prices are Standard API USD per million uncached input/output tokens for short prompts. Haiku's listed rate applies up to 100,000 input tokens. These are not subscription usage rates. Sources: [Anthropic pricing](https://platform.claude.com/docs/en/about-claude/pricing) and [OpenAI pricing](https://developers.openai.com/api/docs/pricing).
+
+| Workload tier | Claude | OpenAI | Claude input/output | OpenAI input/output |
+|---|---|---|---|---|
+| Focused, high-volume work | Haiku 5.5 | GPT-6 Luna | $0.10 / $0.50 | $0.10 / $0.50 |
+| General coding and agent work | Sonnet 5.5 | GPT-6.1 Sol | $2 / $10 | $2 / $10 |
+| Demanding, sustained work | Opus 5.5 | GPT-6 Astra | $4 / $20 | $10 / $50 |
+
+Keep the Codex router and semantic verifier on `gpt-6.1-sol/low` for now. This is a documented starting configuration, not a measured optimum. The router reads the repository, chooses a start cell and diagnoses failed attempts. The semantic verifier judges acceptance, reports or a project verification skill. Unlike Claude's cheap command verifier, Codex runs ordinary test commands in Node, so that path needs no verifier model.
+
+[OpenAI's model guide](https://learn.chatgpt.com/docs/models) recommends starting Sol at the effort available by default in the client. The local Codex model catalog checked for this release reports `low` for Sol. The [API model page](https://developers.openai.com/api/docs/models/gpt-6.1-sol) instead documents `medium` as its API default; this runner explicitly sets effort. Claude and OpenAI effort labels do not establish equivalent reasoning budgets or quality.
+
+[OpenAI's selection guidance](https://developers.openai.com/api/docs/guides/model-selection) positions Luna for scoped tasks and triage, and Sol for complex work with cost constraints. Luna is therefore a candidate for cheaper routing, but public model comparisons do not show that it preserves this plugin's routing or verification accuracy. [Anthropic's Haiku evaluation](https://www.anthropic.com/claude-haiku-5-5) also reports different Haiku/Luna results despite their similar positioning. No role-specific model or effort comparison has been run here. The 91 offline tests validate orchestration, not model quality. Measure routing errors, incorrect verification passes, latency and usage on the same tasks before replacing these defaults.
 
 ## ✨ Features
 
@@ -204,7 +276,7 @@ Every run appends a line to `.model-ladder/history.jsonl`: which cells were trie
 
 ## ⚠️ Limitations
 
-- Claude Code only for now.
+- Claude Code and Codex use separate runtime settings within the same plugin package.
 - Orchestration costs about one session per run regardless of task size.
 - Token counts in the report cover the router, workers and verifier, not the orchestrating session.
 - The benchmark is seven small tasks with one run each.
@@ -212,13 +284,27 @@ Every run appends a line to `.model-ladder/history.jsonl`: which cells were trie
 ## 🧪 Development
 
 ```sh
-node --test tests/unit/*.test.mjs            # 45 unit tests, no dependencies, no model calls
+node --test tests/unit/*.test.mjs            # 91 tests, no dependencies, no model calls
 node tests/e2e/run.mjs --dry                 # plant every scenario and run pytest, no model calls
 node tests/e2e/run.mjs [scenario ...]        # end-to-end via claude -p (about $0.2 per scenario)
 node tests/e2e/bench.mjs                     # 7 tasks x 3 strategies (about $4.5)
+node tests/e2e/codex-smoke.mjs               # real Codex write-and-verify smoke test
 ```
 
-The end-to-end scripts need `claude` and `uv` on `PATH`. Design decisions, spike results and lessons from real runs are in [DESIGN.md](DESIGN.md).
+The Claude end-to-end scripts need `claude` and `uv` on `PATH`. The Codex smoke test needs an authenticated native `codex` executable and a working workspace-write sandbox. Design decisions, spike results and lessons from real runs are in [DESIGN.md](DESIGN.md).
+
+### Local validation on 2026-10-21
+
+These results were observed locally on Windows with Node.js 24.20.0 and Codex CLI 0.160.1. They are separate from the GitHub Actions badge above.
+
+| Check | Result |
+|---|---|
+| Complete offline suite, run from the updated project | **91 passed, 0 failed** |
+| Codex installation from this checkout | Passed in a temporary `CODEX_HOME`; plugin enabled, skill present and installed CLI entry loads |
+| Native Codex read-only task | Passed routing, worker and independent verification with a read-only sandbox and controlled `--ignore-user-config` invocation |
+| Native Codex write task | **Blocked by the host Windows sandbox ACL error** `helper_unknown_error: read ACL run had errors`; no patch applied |
+
+The offline suite uses a fake Codex process with real temporary Git repositories. It covers escalation and fallback, protected tests and verification inputs, npm workspace scripts, dirty snapshots and index preservation, exact patch bytes, conflicts, timeouts and cleanup. These passing checks do not establish that the native Codex write flow passed. That flow still needs a successful smoke run after the host sandbox is repaired. No global settings or sandbox bypass flags were used to make the write test pass.
 
 ## 🙏 Credits
 
@@ -228,4 +314,4 @@ The brief format and the "verifier on a fresh context" rule are adapted from [ps
 
 Released under the [MIT License](LICENSE). Copyright (c) 2026 neilyonglu.
 
-Built in collaboration with Claude Code. Found a problem? Please [open an issue](https://github.com/neilyonglu/model-ladder/issues). Codex support is planned.
+Built in collaboration with Claude Code and Codex. Found a problem? Please [open an issue](https://github.com/neilyonglu/model-ladder/issues).
