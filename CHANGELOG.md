@@ -2,6 +2,15 @@
 
 All notable changes to model-ladder. Versions follow [semantic versioning](https://semver.org); Claude Code only offers an update when `version` in `.claude-plugin/plugin.json` changes.
 
+## [Unreleased]
+
+### Fixed
+
+- Add UTF-8 JSON file input for Codex, including Windows PowerShell BOM support, and distinguish waiting states with a nonzero exit code.
+- Check task completion independently after passing project tests. Allow editing-task verifiers to create build artifacts while rejecting source tampering.
+- Preserve partial logs and unverified worktrees on interrupted Codex attempts. Resume from a checked checkpoint in a fresh worktree, with bounded automatic timeout continuation in the skill.
+- Report each role as it starts and prevent Windows child cancellation from waiting indefinitely on `taskkill`.
+
 ## [1.0.0] - 2026-10-21
 
 ### Added

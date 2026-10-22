@@ -38,7 +38,7 @@ export function environmentFailure(text) {
 function kill(child) {
   if (!child.pid) return
   if (process.platform === 'win32') {
-    try { execFileSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true }) } catch {}
+    try { execFileSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true, timeout: 5000 }) } catch { child.kill('SIGKILL') }
   } else {
     try { process.kill(-child.pid, 'SIGKILL') } catch {}
   }
@@ -46,23 +46,25 @@ function kill(child) {
 
 export function processRun(command, args, { cwd, input = '', timeoutMs = 600000, signal, shell = false } = {}) {
   return new Promise((resolve, reject) => {
-    if (signal?.aborted) return reject(new EnvironmentError('Cancelled'))
+    let stdout = '', stderr = '', stopped = null
+    const failure = (message, code) => Object.assign(new EnvironmentError(message), { code, cwd, stdout, stderr })
+    if (signal?.aborted) return reject(failure('Cancelled', 'CANCELLED'))
     const env = { ...process.env }
     delete env.NODE_TEST_CONTEXT
     const child = spawn(command, args, { cwd, env, shell, windowsHide: true, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'] })
-    let stdout = '', stderr = '', stopped = null
-    const stop = (reason) => { stopped = reason; kill(child) }
-    const abort = () => stop('Cancelled')
+    const stop = (code) => { if (!stopped) { stopped = code; kill(child) } }
+    const abort = () => stop('CANCELLED')
     signal?.addEventListener('abort', abort, { once: true })
-    const timer = setTimeout(() => stop('Timed out'), timeoutMs)
-    child.stdout.on('data', (data) => { stdout = (stdout + data).slice(-131072) })
-    child.stderr.on('data', (data) => { stderr = (stderr + data).slice(-16384) })
+    const timer = setTimeout(() => stop('TIMEOUT'), timeoutMs)
+    const tail = (text, limit) => text.slice(-limit).replace(/^[\uDC00-\uDFFF]/, '')
+    child.stdout.setEncoding('utf8').on('data', (data) => { stdout = tail(stdout + data, 131072) })
+    child.stderr.setEncoding('utf8').on('data', (data) => { stderr = tail(stderr + data, 16384) })
     child.stdin.on('error', () => {})
-    child.on('error', (error) => { clearTimeout(timer); signal?.removeEventListener('abort', abort); reject(new EnvironmentError(error.message)) })
+    child.on('error', (error) => { clearTimeout(timer); signal?.removeEventListener('abort', abort); reject(failure(error.message, error.code)) })
     child.on('close', (code) => {
       clearTimeout(timer)
       signal?.removeEventListener('abort', abort)
-      if (stopped) reject(new EnvironmentError(stopped))
+      if (stopped) reject(failure(stopped === 'TIMEOUT' ? 'Timed out' : 'Cancelled', stopped))
       else resolve({ code, stdout, stderr })
     })
     child.stdin.end(input)
@@ -76,13 +78,24 @@ export async function codexExec({ phase, cell, cwd, run, prompt, sandbox, timeou
   rmSync(outputPath, { force: true })
   const args = [...(executable?.prefixArgs ?? []), 'exec', '-m', cell.model, '-c', `model_reasoning_effort=${JSON.stringify(cell.effort)}`,
     '-C', cwd, '--json', '--output-schema', schemaPath, '-o', outputPath, '--ephemeral', '--sandbox', sandbox, '-']
-  const result = await processRun(executable?.command ?? process.env.CODEX_BINARY ?? 'codex', args, { cwd, input: `This is one internal model-ladder role. Do not invoke model-ladder skills, workflows or runners recursively; perform only the assigned role.\n\n${prompt}`, timeoutMs, signal })
-  writeFileSync(join(run, `${phase}-${randomUUID()}.events.jsonl`), result.stdout)
-  if (result.stderr) writeFileSync(join(run, `${phase}-${randomUUID()}.stderr.txt`), result.stderr)
+  let result
+  try {
+    result = await processRun(executable?.command ?? process.env.CODEX_BINARY ?? 'codex', args, { cwd, input: `This is one internal model-ladder role. Do not invoke model-ladder skills, workflows or runners recursively; perform only the assigned role.\n\n${prompt}`, timeoutMs, signal })
+  } catch (error) {
+    result = error
+    Object.assign(error, { phase, cwd })
+    throw error
+  } finally {
+    if (result) {
+      const logId = `${phase}-${randomUUID()}`
+      writeFileSync(join(run, `${logId}.events.jsonl`), result.stdout ?? '')
+      if (result.stderr) writeFileSync(join(run, `${logId}.stderr.txt`), result.stderr)
+    }
+  }
   const events = result.stdout.split('\n').flatMap((line) => { try { return [JSON.parse(line)] } catch { return [] } })
   const errors = events.filter((event) => event.type === 'error' || event.type === 'turn.failed').map((event) => JSON.stringify(event)).join('\n')
   const errorText = `${result.stderr}\n${errors}`
-  if ((result.code !== 0 || errors) && environmentFailure(errorText)) throw new EnvironmentError(errorText.slice(-4000))
+  if ((result.code !== 0 || errors) && environmentFailure(errorText)) throw Object.assign(new EnvironmentError(errorText.slice(-4000)), { ...result, phase, cwd })
   if (result.code !== 0 || errors) throw new Error(`Codex ${phase} failed (${result.code}): ${errorText.slice(-4000)}`)
   let value
   try { value = validate(JSON.parse(readFileSync(outputPath, 'utf8')), SCHEMAS[phase]) }

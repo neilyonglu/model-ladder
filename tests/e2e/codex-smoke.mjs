@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { runLadder } from '../../scripts/codex-run.mjs'
+import { DEFAULTS, runLadder } from '../../scripts/codex-run.mjs'
 
 const root = mkdtempSync(join(tmpdir(), 'model-ladder-live-'))
 const git = (...args) => execFileSync('git', args, { cwd: root, stdio: 'pipe' })
@@ -16,7 +16,7 @@ mkdirSync(join(root, '.codex'))
 writeFileSync(join(root, '.gitignore'), '.model-ladder/\n')
 writeFileSync(join(root, 'greeting.mjs'), 'export default "Wellcome"\n')
 writeFileSync(join(root, 'greeting.test.mjs'), 'import assert from "node:assert/strict"\nimport greeting from "./greeting.mjs"\nassert.equal(greeting, "Welcome")\n')
-writeFileSync(join(root, '.codex/model-ladder.json'), JSON.stringify({ router: { model, effort }, verifier: { model, effort }, tiers: [{ model, efforts: [effort], maxEffortJump: 1 }], maxAttempts: 1, verify: 'node --test greeting.test.mjs' }))
+writeFileSync(join(root, '.codex/model-ladder.json'), JSON.stringify({ router: DEFAULTS.router, verifier: DEFAULTS.verifier, tiers: [{ model, efforts: [effort], maxEffortJump: 1 }], maxAttempts: 1, verify: 'node --test greeting.test.mjs' }))
 git('add', '-A')
 git('commit', '-qm', 'smoke fixture')
 const result = await runLadder({ task: 'Fix the typo in greeting.mjs so the existing greeting test passes. Do not modify tests.' }, { cwd: root, onProgress: console.error })

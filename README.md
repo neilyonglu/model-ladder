@@ -83,6 +83,14 @@ To supply acceptance criteria or consent to existing changes, pass JSON on stdin
 {"task":"Fix the greeting typo","acceptance":["The greeting says Welcome"],"allowDirty":true}
 ```
 
+On Windows PowerShell, save that JSON in a UTF-8 file and use the file input. Windows PowerShell's default pipe encoding can replace Chinese and other non-ASCII text with question marks. UTF-8 files with a BOM are supported.
+
+```sh
+node /path/to/model-ladder/scripts/codex-run.mjs --input /path/to/task.json
+```
+
+Place input files inside `.model-ladder/` or outside the repository so they do not count as uncommitted source changes. Only `VERIFIED` exits with code 0. `DIRTY`, `NEEDS_INPUT`, and `STALE_RUN` exit with code 2; failures exit with code 1. Inspect the JSON result in each case.
+
 Configure Codex separately in `.codex/model-ladder.json`. Defaults use the locally available model metadata checked for this release; availability depends on the account. An unavailable model, unsupported effort, authentication failure or sandbox failure stops the run. Replace the model IDs and efforts with ones your account exposes.
 
 ```json
@@ -102,11 +110,15 @@ Configure Codex separately in `.codex/model-ladder.json`. Defaults use the local
 }
 ```
 
-`verify` is an existing trusted project command, run by Node and judged by its exit status. Without it, Codex follows `.agents/skills/verify/SKILL.md` or `.claude/skills/verify/SKILL.md` when present; otherwise it discovers an existing npm, pytest, Cargo, Go, Maven or Make test command. If none exists, the user must supply explicit acceptance criteria before work begins. Additional criteria are checked independently by a read-only model. The router never invents a shell command to execute.
+`verify` is an existing trusted project command, run by Node and judged by its exit status. Without it, Codex follows `.agents/skills/verify/SKILL.md` or `.claude/skills/verify/SKILL.md` when present; otherwise it discovers an existing npm, pytest, Cargo, Go, Maven or Make test command. If none exists, the user must supply explicit acceptance criteria before work begins. A separate model always checks the task and any supplied criteria after command checks pass. For editing tasks, this verifier can write build artifacts in the isolated worktree; source and verification inputs remain protected by checks after verification. Report verifiers remain read-only. The router never invents a shell command to execute.
 
 Codex starts every attempt from the same commit plus the user's approved dirty snapshot. Tests and both ladder configuration files stay protected, except tests may change for test-writing tasks. Protection compares actual Git trees before and after verification, including tests the user had already edited. User staging stays unchanged. Read-only reports run in isolated read-only worktrees and return their full report without applying anything.
 
-Successful patches are applied to the working tree without committing or pushing. A conflicting patch is retained with its verified worktree. Cleanup removes only this run's worktrees. Both runtimes use the same exclusive run marker, so they cannot apply concurrent ladder runs in the same checkout. Inspect an abandoned `.model-ladder/run.json` before removing it. SIGINT, SIGTERM and per-command timeouts stop child process trees and release the marker. Result JSON, bounded CLI event/error logs, usage and history remain under `.model-ladder/`; add that directory to `.gitignore`.
+Successful patches are applied to the working tree without committing or pushing. A conflicting patch is retained with its verified worktree. Cleanup removes only this run's worktrees. Both runtimes use the same exclusive run marker, so they cannot apply concurrent ladder runs in the same checkout. Inspect an abandoned `.model-ladder/run.json` before removing it. SIGINT, SIGTERM and per-command timeouts stop child processes and release the marker. Result JSON, bounded CLI event/error logs, usage and history remain under `.model-ladder/`, including partial logs on timeout or cancellation. Add that directory to `.gitignore`.
+
+Interrupted workers and verifiers retain their unverified worktree and return `checkpointPath` and `resumeRun`. To continue, add that `resumeRun` to the original input JSON and invoke the runner again. Keep the original task, acceptance criteria, and authorized `allowDirty` value. Resume requires the same repository commit, source snapshot, and ladder configuration. The runner checks protected files, starts a new worktree containing the draft, and repeats verification before applying changes. The source worktree remains available for inspection. Each role still has the configured `timeoutMs` limit; the Codex skill automatically resumes a timeout at most twice.
+
+Artifact paths such as `dist`, `build`, and `target` are excluded from patch and tampering comparisons, including tracked files in those directories. Keep source and verification inputs outside these paths.
 
 On Windows, the Codex workspace-write sandbox must be working before a worker can run. A host sandbox setup or ACL error stops the run; repair the Codex sandbox setup and retry. The runner does not weaken sandbox settings automatically.
 

@@ -27,7 +27,14 @@ if (scenario.warning) console.error('sandbox initialized normally')
 let output
 if (phase === 'route') output = {model:scenario.invalidStart ? 'no-model' : 'cheap',effort:'low',reason:'small task',goal:'Fix greeting',scope:['greeting.mjs'],allowTests:scenario.allowTests ?? false,readOnly:scenario.readOnly ?? false,question:scenario.question ?? null}
 if (phase === 'worker') {
-  if (scenario.delay) await new Promise((resolve) => setTimeout(resolve,scenario.delay))
+  for (const [file, value] of Object.entries(scenario.expectWorkerFiles ?? {})) {
+    if (number > 1) assert.equal(readFileSync(join(cwd, file), 'utf8'), value)
+  }
+  for (const [file, value] of Object.entries(scenario.partialFiles ?? {})) {
+    if (number === 1) writeFileSync(join(cwd, file), value)
+  }
+  console.log(JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'Worker started' } }))
+  if (scenario.delay && (!scenario.delayFirst || number === 1)) await new Promise((resolve) => setTimeout(resolve,scenario.delay))
   if (!scenario.readOnly) writeFileSync(join(cwd,'greeting.mjs'), 'export default ' + JSON.stringify(scenario.failFirst && number === 1 || scenario.alwaysFail ? 'Wrong' : 'Welcome') + '\n')
   for (const [file, value] of Object.entries(scenario.workerFiles ?? {})) {
     mkdirSync(join(cwd, file, '..'), { recursive: true })
@@ -50,7 +57,7 @@ if (phase === 'verify') {
     writeFileSync(join(cwd, file), value)
   }
 }
-if (phase === 'verify') output = {pass:true,reason:'Criteria met',output:'Inspected actual source'}
+if (phase === 'verify') output = {pass:scenario.verifyPass ?? true,reason:scenario.verifyPass === false ? 'Requested behavior is missing' : 'Criteria met',output:'Inspected actual source'}
 if (phase === 'diagnose') output = {action:scenario.stopEnvironment ? 'stop_environment':'raise_effort',model:scenario.invalidMove ? 'unavailable':'cheap',effort:scenario.invalidMove ? 'ultra':'medium',reason:'Retry',hint:'Fix the greeting'}
 if (scenario.badOutput === phase) output = {invalid:true}
 writeFileSync(arg('-o'),JSON.stringify(output))
