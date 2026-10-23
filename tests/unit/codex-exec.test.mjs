@@ -89,3 +89,10 @@ test('codex timeout persists partial events and stderr with phase context', asyn
   assert.equal(readFileSync(join(run, eventsFile), 'utf8'), stdout)
   assert.equal(readFileSync(join(run, eventsFile.replace('.events.jsonl', '.stderr.txt')), 'utf8'), stderr)
 })
+
+test('timeout is an idle limit: steady output outlives timeoutMs', async () => {
+  const script = `let n = 0; const t = setInterval(() => { process.stdout.write('.'); if (++n === 8) { clearInterval(t) } }, 250)`
+  const result = await processRun(process.execPath, ['-e', script], { timeoutMs: 1000 })
+  assert.equal(result.code, 0)
+  assert.equal(result.stdout, '........')
+})

@@ -2,6 +2,12 @@
 
 All notable changes to model-ladder. Versions follow [semantic versioning](https://semver.org); Claude Code only offers an update when `version` in `.claude-plugin/plugin.json` changes.
 
+## [Unreleased]
+
+### Changed
+
+- Codex `timeoutMs` is now an idle limit: a role or verify command is stopped only after `timeoutMs` with no output, instead of after `timeoutMs` in total.
+
 ## [1.1.0] - 2026-10-23
 
 ### Changed

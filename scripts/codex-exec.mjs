@@ -55,16 +55,17 @@ export function processRun(command, args, { cwd, input = '', timeoutMs = 600000,
     const stop = (code) => { if (!stopped) { stopped = code; kill(child) } }
     const abort = () => stop('CANCELLED')
     signal?.addEventListener('abort', abort, { once: true })
+    // Idle limit, not a deadline: any output proves the child is still working and restarts the clock.
     const timer = setTimeout(() => stop('TIMEOUT'), timeoutMs)
     const tail = (text, limit) => text.slice(-limit).replace(/^[\uDC00-\uDFFF]/, '')
-    child.stdout.setEncoding('utf8').on('data', (data) => { stdout = tail(stdout + data, 131072) })
-    child.stderr.setEncoding('utf8').on('data', (data) => { stderr = tail(stderr + data, 16384) })
+    child.stdout.setEncoding('utf8').on('data', (data) => { timer.refresh(); stdout = tail(stdout + data, 131072) })
+    child.stderr.setEncoding('utf8').on('data', (data) => { timer.refresh(); stderr = tail(stderr + data, 16384) })
     child.stdin.on('error', () => {})
     child.on('error', (error) => { clearTimeout(timer); signal?.removeEventListener('abort', abort); reject(failure(error.message, error.code)) })
     child.on('close', (code) => {
       clearTimeout(timer)
       signal?.removeEventListener('abort', abort)
-      if (stopped) reject(failure(stopped === 'TIMEOUT' ? 'Timed out' : 'Cancelled', stopped))
+      if (stopped) reject(failure(stopped === 'TIMEOUT' ? `Timed out after ${timeoutMs}ms without output` : 'Cancelled', stopped))
       else resolve({ code, stdout, stderr })
     })
     child.stdin.end(input)
