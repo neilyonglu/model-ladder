@@ -54,7 +54,7 @@ For a local checkout, replace `neilyonglu/model-ladder` with the checkout's abso
 
 ### Use ladder by default in Codex
 
-On by default: the plugin's session-start hook tells Codex that top-level coding tasks in a Git repository go through the model-ladder skill, unless you ask to skip it. Codex asks you to trust plugin hooks once: run `codex`, open `/hooks`, review and trust model-ladder's hook, and start a new thread. Nothing goes into `~/.codex/AGENTS.md`, so a new machine needs no setup.
+On by default: the plugin's session-start hook tells Codex that top-level coding tasks in a Git repository go through the model-ladder skill, unless you ask to skip it. Conversation, status checks, Git operations, settings and documentation edits are handled directly. Codex asks you to trust plugin hooks once: run `codex`, open `/hooks`, review and trust model-ladder's hook, and start a new thread. Nothing goes into `~/.codex/AGENTS.md`, so a new machine needs no setup.
 
 To turn it off, set `MODEL_LADDER_AUTORUN=0` in the environment Codex starts from, or leave the hook untrusted. This is an instruction-based default, subject to higher-priority and project instructions. It does not replace the parent session's model or guarantee that every message launches a ladder run.
 
@@ -169,11 +169,11 @@ The following comparison matches product positioning, not equal performance. Pri
 | General coding and agent work | Sonnet 5.5 | GPT-6.1 Sol | $2 / $10 | $2 / $10 |
 | Demanding, sustained work | Opus 5.5 | GPT-6 Astra | $4 / $20 | $10 / $50 |
 
-Codex defaults mirror the Claude defaults role for role: Luna for Haiku, Terra for Sonnet, Sol for Opus. The router runs on `gpt-5.6-terra/low` and the semantic verifier on `gpt-6-luna/low`. This is a documented starting configuration, not a measured optimum. The router reads the repository, chooses a start cell and diagnoses failed attempts. The semantic verifier judges acceptance, reports or a project verification skill. Unlike Claude's cheap command verifier, Codex runs ordinary test commands in Node, so that path needs no verifier model.
+Codex defaults mirror the Claude defaults role for role: Luna for Haiku, Terra for Sonnet, Sol for Opus. The router runs on `gpt-5.6-terra/low` and the semantic verifier on `gpt-6-luna/low`. This is a documented starting configuration, not a measured optimum. The router reads the repository, chooses a start cell and diagnoses failed attempts. The semantic verifier judges acceptance, reports or a project verification skill. Codex runs ordinary test commands in Node, then uses the independent verifier to check task completion; the command execution itself needs no model.
 
 [OpenAI's model guide](https://learn.chatgpt.com/docs/models) recommends starting Sol at the effort available by default in the client. The local Codex model catalog checked for this release reports `low` for Sol. The [API model page](https://developers.openai.com/api/docs/models/gpt-6.1-sol) instead documents `medium` as its API default; this runner explicitly sets effort. Claude and OpenAI effort labels do not establish equivalent reasoning budgets or quality.
 
-[OpenAI's selection guidance](https://developers.openai.com/api/docs/guides/model-selection) positions Luna for scoped tasks and triage, and Sol for complex work with cost constraints. Luna is therefore a candidate for cheaper routing, but public model comparisons do not show that it preserves this plugin's routing or verification accuracy. [Anthropic's Haiku evaluation](https://www.anthropic.com/claude-haiku-5-5) also reports different Haiku/Luna results despite their similar positioning. No role-specific model or effort comparison has been run here. The 91 offline tests validate orchestration, not model quality. Measure routing errors, incorrect verification passes, latency and usage on the same tasks before replacing these defaults.
+[OpenAI's selection guidance](https://developers.openai.com/api/docs/guides/model-selection) positions Luna for scoped tasks and triage, and Sol for complex work with cost constraints. Luna is therefore a candidate for cheaper routing, but public model comparisons do not show that it preserves this plugin's routing or verification accuracy. [Anthropic's Haiku evaluation](https://www.anthropic.com/claude-haiku-5-5) also reports different Haiku/Luna results despite their similar positioning. No role-specific model or effort comparison has been run here. The offline tests validate orchestration, not model quality. Measure routing errors, incorrect verification passes, latency and usage on the same tasks before replacing these defaults.
 
 ## ✨ Features
 
@@ -410,10 +410,12 @@ The band shows in the terminal, the desktop app and the VS Code extension. It ne
 ## 🧪 Development
 
 ```sh
-node --test tests/unit/*.test.mjs            # 105 tests, no dependencies, no model calls
+node --test tests/unit/*.test.mjs            # offline suite, no model calls
 node tests/e2e/run.mjs --dry                 # plant every scenario and run pytest, no model calls
 node tests/e2e/run.mjs [scenario ...]        # end-to-end via claude -p (about $0.2 per scenario)
 node tests/e2e/bench.mjs                     # 7 tasks x 3 strategies (about $4.5)
+node tests/e2e/codex-live-smoke.mjs          # offline runner/monitor demo with fake Codex
+node tests/e2e/codex-live-smoke.mjs --terminal # visual terminal redraw preview
 node tests/e2e/codex-smoke.mjs               # real Codex write-and-verify smoke test
 ```
 
@@ -439,6 +441,10 @@ The production-role native smoke test passed on 2026-10-22 with a Sol router, Lu
 The runner now preserves interrupted drafts and partial logs, supports checked continuation with `resumeRun`, accepts UTF-8 JSON files on PowerShell, and verifies task completion independently after project tests. Tracked baseline files under artifact directories also participate in protection and patch checks.
 
 The complete offline suite passed on 2026-10-23 with **105 passed, 0 failed**. Four new real-Git checks cover tracked artifact edits and deletions, ignored new artifacts, literal patch filenames, and verifier rebuilds against the original baseline. The updated runtime files were copied to the local installed plugin with backups, and their SHA-256 hashes matched this checkout.
+
+### v1.6.0 documentation validation on 2026-10-23
+
+On Linux with Node.js 22.23.4, the complete offline suite passed with **138 passed, 0 failed**. The offline Codex live smoke test also passed: the runner returned `VERIFIED`, running elapsed times advanced, completed times froze, and completed rows disappeared after ten seconds. These checks used fake Codex processes and disposable Git repositories; no authenticated model call was made.
 
 ## 🙏 Credits
 

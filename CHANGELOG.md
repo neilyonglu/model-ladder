@@ -2,6 +2,14 @@
 
 All notable changes to model-ladder. Versions follow [semantic versioning](https://semver.org); Claude Code only offers an update when `version` in `.claude-plugin/plugin.json` changes.
 
+## [Unreleased]
+
+### Documentation
+
+- Bring the design document up to v1.6.0: both runtime entry points, default-on session guidance and usage guards, Claude band, Codex idle timeout/resume, and live monitor state and controls.
+- Clarify that Codex checks task completion independently after Node runs project tests; distinguish verifier sandbox permissions for edits and reports.
+- Refresh development commands and separate historical validation counts from the current offline suite.
+
 ## [1.6.0] - 2026-10-23
 
 ### Added
