@@ -18,12 +18,13 @@ export const DEFAULTS = {
     { model: 'gpt-6.1-sol', efforts: ['low', 'medium', 'high', 'xhigh'], maxEffortJump: 1 },
   ],
   maxAttempts: 4, verify: null, protected: [], keepFailed: false, timeoutMs: 600000,
-  usageGuard: { enabled: false, threshold: 90 },
+  usageGuard: { enabled: true, threshold: 90 },
 }
 const EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']
 export function loadConfig(root) {
   const path = join(root, '.codex', 'model-ladder.json')
-  const config = { ...DEFAULTS, ...(existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : {}) }
+  const user = existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : {}
+  const config = { ...DEFAULTS, ...user, usageGuard: { ...DEFAULTS.usageGuard, ...user.usageGuard } }
   const cell = (value) => typeof value?.model === 'string' && value.model.trim() && EFFORTS.includes(value.effort)
   if (!cell(config.router) || !cell(config.verifier)) throw new Error('router and verifier require model and supported effort')
   if (!Array.isArray(config.tiers) || !config.tiers.length || config.tiers.some((tier) =>

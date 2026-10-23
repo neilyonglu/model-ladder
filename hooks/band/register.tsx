@@ -39,13 +39,27 @@ const clip = (text: string, cols: number) => {
 }
 const WINDOW: Record<string, string> = { five_hour: '5h', seven_day: '7d' }
 
-export const register: Register = on => {
+export const register: Register = (on, options) => {
   // Redraws once a second while an agent runs, so its elapsed time moves.
   let tick: Timer | null = null
   // What the person typed in the threshold field, until they press set.
   let draft: string | null = null
   // Agents already told about; a long run is only reported, never stopped.
   const warned = new Set<string>()
+
+  // Records the subscription usage where preflight and the verifier read it, so the usage guard needs no statusline.
+  // It runs with the band hidden too: the guard depends on it, not on the drawing.
+  on('session.measure', async ($, e, next) => {
+    const window = (kind: string) => {
+      const w = e.rateLimits.find((r) => r.kind === kind)
+      return w ? { used_percentage: w.percentUsed, resets_at: w.resetsAt ? Date.parse(w.resetsAt) / 1000 : null } : null
+    }
+    if (e.rateLimits.length) {
+      const usage = { five_hour: window('five_hour'), seven_day: window('seven_day'), updatedAt: Math.floor((await $.clock.now()) / 1000) }
+      await $.fs.write(`${await $.session.cwd()}/.model-ladder/usage.json`, JSON.stringify(usage)).catch(() => undefined)
+    }
+    return next(e)
+  })
 
   // A reload drops its pending removals, so finished rows left from before it go now.
   on('session.start', async ($, e, next) => {
@@ -97,7 +111,7 @@ export const register: Register = on => {
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    if (e.props.hasSurvey) return next(e)
+    if (e.props.hasSurvey || options.band === false) return next(e)
     const shown = await read($, rows)
     const running = shown.filter((r) => r.status === 'running')
     const els = $.ui.resolve(e)

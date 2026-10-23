@@ -8,6 +8,8 @@ import { fileURLToPath } from 'node:url'
 
 const script = (name) => fileURLToPath(new URL(`../../scripts/${name}.mjs`, import.meta.url))
 const dirs = []
+// The usage guard is on by default: an empty Claude config dir keeps this machine's real usage out of every test.
+process.env.CLAUDE_CONFIG_DIR = mkdtempSync(join(tmpdir(), 'ml-no-usage-'))
 after(() => dirs.forEach((d) => rmSync(d, { recursive: true, force: true })))
 
 const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim()
@@ -258,7 +260,7 @@ test('usageGuard on below the threshold: READY with the usage command', () => {
   assert.equal(out.status, 'READY')
   assert.equal(out.usageNote, undefined)
   assert.equal(out.workflowArgs.usageGuard.threshold, 90)
-  const file = out.workflowArgs.usageGuard.command.match(/^node "(.+usage-statusline\.mjs)" --percent$/)?.[1]
+  const file = out.workflowArgs.usageGuard.command.match(/^node "(.+usage-statusline\.mjs)" --percent --root "(.+)"$/)?.[1]
   assert.ok(file && existsSync(file), out.workflowArgs.usageGuard.command)
   assert.ok(existsSync(join(dir, '.model-ladder/run.json')))
 })
@@ -266,8 +268,19 @@ test('usageGuard on below the threshold: READY with the usage command', () => {
 test('usageGuard on with unknown usage: READY with a usageNote', () => {
   const out = guarded(repo(), null)
   assert.equal(out.status, 'READY')
-  assert.match(out.usageNote, /statusline|will not take effect/)
+  assert.match(out.usageNote, /no recent Claude usage/)
   assert.ok(out.workflowArgs.usageGuard)
+})
+
+test('usageGuard is on by default and reads the usage the band records in the project', () => {
+  const dir = repo()
+  const now = Date.now() / 1000
+  write(dir, '.model-ladder/usage.json', JSON.stringify({ updatedAt: now, five_hour: { used_percentage: 97, resets_at: now + 3600 }, seven_day: null }))
+  const out = preflight(dir)
+  assert.equal(out.status, 'USAGE_LIMIT')
+  assert.match(out.message, /97%.*90%/)
+  const percent = execFileSync('node', [script('usage-statusline'), '--percent', '--root', dir], { encoding: 'utf8' }).trim()
+  assert.equal(percent, '97')
 })
 
 test('usageGuard off: no usageGuard in workflowArgs, even with high usage on file', () => {
@@ -295,7 +308,8 @@ test('USAGE_LIMIT: keeps the last attempt worktree, writes HANDOFF.md, disarms t
   const report = finish(dir, { task: 'fix b', result })
   const handoff = join(dir, '.model-ladder', 'HANDOFF.md')
   assert.match(report, /model-ladder ── USAGE_LIMIT/)
-  assert.ok(report.includes(`Handoff   ${handoff}`), report)
+  // Not the full path: on Windows the temp dir and git spell it differently (short vs long names).
+  assert.match(report, /Handoff {3}\S.*HANDOFF\.md/)
   const text = readFileSync(handoff, 'utf8')
   assert.match(text, /fix b/)
   assert.match(text, /Claude usage 95% reached/)

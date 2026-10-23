@@ -1,6 +1,6 @@
 {
   "name": "model-ladder",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "Run a coding task on the cheapest model and effort likely to succeed, verify it, and escalate on failure.",
   "author": {
     "name": "neilyonglu"
@@ -8,5 +8,19 @@
   "hooks": [
     "./hooks/band.json"
   ],
-  "types": "./hooks/band/types.d.ts"
+  "types": "./hooks/band/types.d.ts",
+  "userConfig": {
+    "autoRun": {
+      "type": "boolean",
+      "title": "Use the ladder by default",
+      "description": "At the start of each session, tell Claude that top-level coding tasks in a git repository go through /model-ladder:run unless you say to skip it. Off: the ladder runs only when you call it.",
+      "default": true
+    },
+    "band": {
+      "type": "boolean",
+      "title": "Show the band",
+      "description": "Show the model-ladder band above the prompt: subscription usage, the ladder agents running now, and the usage guard switch. Off hides it; the usage guard keeps working.",
+      "default": true
+    }
+  }
 }

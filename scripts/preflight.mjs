@@ -12,7 +12,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { ALWAYS_PROTECTED, TEST_PATTERNS } from '../hooks/guard.mjs'
 import { git, print, repoRoot, runDir, tryGit, worktrees } from './common.mjs'
-import { readClaudeUsage } from './usage-statusline.mjs'
+import { projectUsageFile, readClaudeUsage } from './usage-statusline.mjs'
 
 export const DEFAULTS = {
   router: { model: 'sonnet', effort: 'low' },
@@ -27,7 +27,7 @@ export const DEFAULTS = {
   protected: [],
   commit: false,
   keepFailed: false,
-  usageGuard: { enabled: false, threshold: 90 },
+  usageGuard: { enabled: true, threshold: 90 },
 }
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max']
 const OWN = [':!.claude/worktrees', ':!.model-ladder']
@@ -78,7 +78,7 @@ function main(flags) {
 
   // Before the run marker, so stopping here leaves no state behind.
   const guard = config.usageGuard
-  const usage = guard.enabled ? readClaudeUsage() : null
+  const usage = guard.enabled ? readClaudeUsage(projectUsageFile(root)) ?? readClaudeUsage() : null
   if (usage !== null && usage >= guard.threshold) {
     return { status: 'USAGE_LIMIT', message: `Claude usage is at ${usage}%, at or above the usageGuard threshold of ${guard.threshold}%. Try again after the limit resets.` }
   }
@@ -126,11 +126,11 @@ function main(flags) {
         setupPatch,
         setupFiles,
         ...(guard.enabled && {
-          usageGuard: { threshold: guard.threshold, command: `node "${dirname(fileURLToPath(import.meta.url))}/usage-statusline.mjs" --percent` },
+          usageGuard: { threshold: guard.threshold, command: `node "${dirname(fileURLToPath(import.meta.url))}/usage-statusline.mjs" --percent --root "${root}"` },
         }),
       },
       ...(guard.enabled && usage === null && {
-        usageNote: 'usageGuard is on, but no recent Claude usage was found. Until the model-ladder statusline script is set up (see the README), the guard will not take effect.',
+        usageNote: 'usageGuard is on, but no recent Claude usage was found, so it cannot stop this run. The model-ladder band records usage once Claude Code has answered on a Pro/Max plan; with the band off or on an API key, see the README.',
       }),
     }
   } catch (error) {

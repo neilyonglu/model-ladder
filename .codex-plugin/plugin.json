@@ -1,9 +1,10 @@
 {
   "name": "model-ladder",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "Run a coding task on the cheapest model and effort likely to succeed, verify it, and escalate on failure.",
   "author": {
     "name": "neilyonglu"
   },
-  "skills": "./codex-skills/"
+  "skills": "./codex-skills/",
+  "hooks": "./hooks/codex-hooks.json"
 }

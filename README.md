@@ -54,20 +54,9 @@ For a local checkout, replace `neilyonglu/model-ladder` with the checkout's abso
 
 ### Use ladder by default in Codex
 
-Installing the plugin makes the skill available. To make it the default for coding tasks across your repositories, add the following to `~/.codex/AGENTS.md` (or `$CODEX_HOME/AGENTS.md` if you use a custom profile). Preserve any existing instructions.
+On by default: the plugin's session-start hook tells Codex that top-level coding tasks in a Git repository go through the model-ladder skill, unless you ask to skip it. Codex asks you to trust plugin hooks once: run `codex`, open `/hooks`, review and trust model-ladder's hook, and start a new thread. Nothing goes into `~/.codex/AGENTS.md`, so a new machine needs no setup.
 
-```text
-For top-level coding tasks in a Git repository, use the installed model-ladder
-skill by default, unless I explicitly ask to skip it. Read its SKILL.md from
-the path supplied by Codex and run its packaged runner.
-For an internal model-ladder role, perform only the assigned role; never invoke
-ladder recursively. Handle conversation, status and ladder setup directly.
-Keep approval and sandbox controls. Ask for dirty-change consent as the skill
-requires. If ladder is unavailable or blocked, report the blocker instead of
-silently doing the task directly. Never invent acceptance criteria or approval.
-```
-
-Restart Codex after changing global instructions. This is an instruction-based default, subject to higher-priority and project instructions. It does not replace the parent session's model or guarantee that every message launches a ladder run. See [OpenAI's AGENTS.md guide](https://learn.chatgpt.com/docs/agent-configuration/agents-md).
+To turn it off, set `MODEL_LADDER_AUTORUN=0` in the environment Codex starts from, or leave the hook untrusted. This is an instruction-based default, subject to higher-priority and project instructions. It does not replace the parent session's model or guarantee that every message launches a ladder run.
 
 ### Run the Codex runner directly
 
@@ -107,9 +96,11 @@ Configure Codex separately in `.codex/model-ladder.json`. Defaults use the local
   "protected": [],
   "keepFailed": false,
   "timeoutMs": 600000,
-  "usageGuard": { "enabled": false, "threshold": 90 }
+  "usageGuard": { "enabled": true, "threshold": 90 }
 }
 ```
+
+`usageGuard` is on by default: before each role and the verify command the runner reads the latest Codex session `rate_limits`, and at or above `threshold` percent it stops with `USAGE_LIMIT`, keeps the checkpoint and writes `HANDOFF.md` (`handoffPath`). Unknown or expired usage never blocks. Turn it off with `{"usageGuard": {"enabled": false}}`.
 
 `verify` is an existing trusted project command, run by Node and judged by its exit status. Without it, Codex follows `.agents/skills/verify/SKILL.md` or `.claude/skills/verify/SKILL.md` when present; otherwise it discovers an existing npm, pytest, Cargo, Go, Maven or Make test command. If none exists, the user must supply explicit acceptance criteria before work begins. A separate model always checks the task and any supplied criteria after command checks pass. For editing tasks, this verifier can write build artifacts in the isolated worktree; source and verification inputs remain protected by checks after verification. Report verifiers remain read-only. The router never invents a shell command to execute.
 
@@ -218,6 +209,16 @@ claude plugin marketplace add neilyonglu/model-ladder
 claude plugin install model-ladder@model-ladder
 ```
 
+**Everything is on after install.** Open any git repository and run `/model-ladder:run <task>`; no setup file is needed:
+
+- **The ladder by default**: at the start of each session the plugin tells Claude that top-level coding tasks in a git repository go through `/model-ladder:run`, unless you say to skip it ("no ladder", "do it directly"). Conversation, status checks, git, settings and docs are handled directly. Nothing goes into `CLAUDE.md`, so a new machine needs no setup.
+- **The ladder**: cheapest model first, verified, escalated on failure.
+- **The band** above the prompt: subscription usage, the ladder agents running now, and the usage guard switch. See [Claude Code band](#claude-code-band).
+- **The usage guard**: a run does not start, or stops after an attempt, once the 5-hour or weekly limit reaches 90%. It leaves a `HANDOFF.md` to pick up from. See [Claude Code usage guard](#claude-code-usage-guard).
+- **The guard hook**: workers cannot edit tests or the ladder config unless the task is about tests.
+
+To turn any of these off, see [Turn features off](#turn-features-off).
+
 **Requirements**
 
 - Claude Code with the Workflow tool (paid plans; on Pro, enable it in `/config`). Tested on 2.1.296.
@@ -282,22 +283,24 @@ Optional, per project: `.claude/model-ladder.json`. Each key you set replaces it
 | `protected` | `[]` | Extra globs no worker may modify |
 | `commit` | `false` | Commit the verified change |
 | `keepFailed` | `false` | Keep failed attempts' worktrees for debugging |
-| `usageGuard` | `{"enabled": false, "threshold": 90}` | When enabled, read the latest Codex session `rate_limits` before each role and the verify command; at or above `threshold` percent (1-100) stop with `USAGE_LIMIT`, keep the checkpoint and write `HANDOFF.md` (`handoffPath`). Unknown or expired usage never blocks |
+| `usageGuard` | `{"enabled": true, "threshold": 90}` | Stop at `threshold` percent (1-100) of the subscription's 5-hour or weekly limit; see [Claude Code usage guard](#claude-code-usage-guard). Set either field alone, e.g. `{"usageGuard": {"enabled": false}}` |
 
 ### Claude Code usage guard
 
-Opt-in. With `usageGuard` on, the ladder stops before it burns the rest of your Claude subscription (Pro/Max) limit. Preflight refuses to start at or above `threshold` percent of the 5-hour or weekly limit; after each failed attempt the verifier re-reads the usage, and at the threshold the run stops with `USAGE_LIMIT`, keeps the last attempt's worktree and writes `.model-ladder/HANDOFF.md`. Re-run `/model-ladder:run` after the limit resets.
+On by default. It stops the ladder before it uses up your Claude subscription (Pro/Max) limit:
 
-1. Enable it in `.claude/model-ladder.json`: `{ "usageGuard": { "enabled": true, "threshold": 90 } }`.
-2. A plugin cannot set your statusline, so copy the plugin's `scripts/usage-statusline.mjs` to `~/.claude/model-ladder-usage-statusline.mjs` (the plugin cache path changes with every version) and add this to `~/.claude/settings.json`:
+- Before a run: at or above `threshold` percent (default 90) of the 5-hour or weekly limit, the run does not start.
+- After each failed attempt: the verifier re-reads the usage. At the threshold the run stops with `USAGE_LIMIT`, keeps the last attempt's worktree and writes `.model-ladder/HANDOFF.md`. Run `/model-ladder:run` again after the limit resets.
+
+An attempt in progress is never interrupted. Unknown usage never blocks: preflight then shows a note and the run goes on.
+
+**Where the usage comes from.** The band records it from Claude Code into `.model-ladder/usage.json` in the project, so there is nothing to set up. If the band cannot load (an older Claude Code) or you use an API key, there is no usage to read. A statusline can supply it instead. Copy the plugin's `scripts/usage-statusline.mjs` to `~/.claude/model-ladder-usage-statusline.mjs` (the plugin cache path changes with every version), then add this to `~/.claude/settings.json`:
 
 ```json
 "statusLine": { "type": "command", "command": "node ~/.claude/model-ladder-usage-statusline.mjs", "refreshInterval": 60 }
 ```
 
-If you already have a statusline script, also pipe its stdin to this one: it saves the usage to `${CLAUDE_CONFIG_DIR:-~/.claude}/model-ladder-usage.json`.
-
-Limits: only Pro/Max report usage; the number can lag by up to a few minutes, and a file older than 15 minutes counts as unknown (never blocks; preflight then shows a note). The check runs when an attempt ends, so an attempt in progress is never interrupted.
+Only Pro/Max plans report usage. A reading older than 15 minutes counts as unknown.
 
 <details>
 <summary>Example: a three-rung ladder that commits</summary>
@@ -322,7 +325,11 @@ Every run appends a line to `.model-ladder/history.jsonl`: which cells were trie
 
 ### Claude Code band
 
-While Claude Code is open, a band above the prompt shows the ladder live:
+A band above the prompt shows the ladder live. It is on after install.
+
+<p align="center"><img src="assets/band.png" width="505" alt="The model-ladder band in the VS Code extension, idle: the 5-hour usage is 10% and the weekly usage 44%, with the usage guard on at a threshold of 90%."></p>
+
+While a run is going, each ladder agent gets a row:
 
 ```
 ▴ model-ladder ── 5h 15% · 7d 44%
@@ -332,11 +339,21 @@ sonnet-5.5/medium   12s      Collect the escalation rules…
 [usage guard: on]  threshold [90] % [set]
 ```
 
-- The header shows the subscription usage (5-hour and weekly) and `idle` when no ladder agent runs. `▴`/`▾` folds it to one line.
-- Each running agent gets one row with its model/effort, time so far and task. A finished row shows `✓` for 10 seconds, then leaves. An agent still running after 10 minutes raises one notice; nothing stops it.
-- `usage guard` turns the usage guard on or off, and `threshold` (shown while it is on) takes a number from 1 to 100. Both write `.claude/model-ladder.json` and apply from the next run.
+- **Header**: the subscription usage (5-hour and weekly), and `idle` when no ladder agent runs. `▴`/`▾` folds the band to one line.
+- **Rows**: each running agent's model/effort, time so far and task. A finished row shows `✓` for 10 seconds, then leaves. An agent still running after 10 minutes raises one notice; nothing stops it.
+- **Controls**: `usage guard` turns the guard on or off. `threshold` is shown while the guard is on and takes a number from 1 to 100. Both write `.claude/model-ladder.json` and apply from the next run.
 
-The band needs a Claude Code version with plugin modules (2.1.290 or later). It shows in the terminal, the desktop app and the VS Code extension. It lives in its own hooks file, so an older version that cannot load it still runs the ladder.
+The band shows in the terminal, the desktop app and the VS Code extension. It needs Claude Code 2.1.290 or later. It lives in its own hooks file, so an older version that cannot load it still runs the ladder.
+
+### Turn features off
+
+| Feature | How to turn it off |
+|---|---|
+| Ladder by default | In Claude Code: `/plugin configure model-ladder`, set **Use the ladder by default** off; or from a terminal: `echo '{"autoRun":"false"}' \| claude plugin configure model-ladder@model-ladder --values-stdin`. Either runtime: set `MODEL_LADDER_AUTORUN=0`. You can still run `/model-ladder:run <task>` yourself. |
+| Band | In Claude Code: `/plugin configure model-ladder`, set **Show the band** off. From a terminal (also for VS Code): `echo '{"band":"false"}' \| claude plugin configure model-ladder@model-ladder --values-stdin`. The usage guard keeps working with the band hidden. |
+| Usage guard | Press `usage guard` in the band, or set `{"usageGuard": {"enabled": false}}` in `.claude/model-ladder.json` (per project). |
+| Threshold | Type it in the band, or set `{"usageGuard": {"threshold": 95}}`. |
+| The whole plugin | `/plugin disable model-ladder@model-ladder`, or `claude plugin disable model-ladder@model-ladder`. |
 
 ## 🛡️ Safety
 

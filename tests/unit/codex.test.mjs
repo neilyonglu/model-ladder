@@ -9,6 +9,9 @@ import { runLadder, loadConfig, discoverVerify, readInput } from '../../scripts/
 import { SCHEMAS, validate, environmentFailure } from '../../scripts/codex-exec.mjs'
 
 const dirs = []
+// The usage guard is on by default: point it at an empty Codex home so this machine's real usage never decides a test.
+const NO_USAGE = mkdtempSync(join(tmpdir(), 'ladder-no-usage-'))
+process.env.CODEX_HOME = NO_USAGE
 after(() => dirs.forEach((dir) => rmSync(dir, { recursive: true, force: true })))
 const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
 const fake = fileURLToPath(new URL('../helpers/fake-codex.mjs', import.meta.url))
@@ -264,6 +267,8 @@ test('usageGuard validates its configuration', () => {
   write(dir, '.codex/model-ladder.json', JSON.stringify({ usageGuard: { enabled: true, threshold: 101 } }))
   assert.throws(() => loadConfig(dir), /usageGuard/)
   write(dir, '.codex/model-ladder.json', JSON.stringify({}))
+  assert.deepEqual(loadConfig(dir).usageGuard, { enabled: true, threshold: 90 })
+  write(dir, '.codex/model-ladder.json', JSON.stringify({ usageGuard: { enabled: false } }))
   assert.deepEqual(loadConfig(dir).usageGuard, { enabled: false, threshold: 90 })
 })
 test('usageGuard stops at the threshold with a handoff and releases the marker', async () => {
@@ -277,16 +282,16 @@ test('usageGuard stops at the threshold with a handoff and releases the marker',
     assert.match(readFileSync(result.handoffPath, 'utf8'), /Fix greeting typo/)
     assert.match(read(dir, 'greeting.mjs'), /Wellcome/)
     cleaned(dir)
-  } finally { delete process.env.CODEX_HOME }
+  } finally { process.env.CODEX_HOME = NO_USAGE }
 })
 test('usageGuard disabled ignores high usage', async () => {
-  const dir = fixture()
+  const dir = fixture({}, { usageGuard: { enabled: false } })
   process.env.CODEX_HOME = fakeUsage(95)
   try {
     const result = await run(dir)
     assert.equal(result.status, 'VERIFIED', JSON.stringify(result))
     assert.equal(result.handoffPath, undefined)
-  } finally { delete process.env.CODEX_HOME }
+  } finally { process.env.CODEX_HOME = NO_USAGE }
 })
 
 test('UTF-8 JSON files preserve Chinese including a PowerShell UTF-8 BOM', async () => {

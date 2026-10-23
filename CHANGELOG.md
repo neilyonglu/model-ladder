@@ -2,6 +2,23 @@
 
 All notable changes to model-ladder. Versions follow [semantic versioning](https://semver.org); Claude Code only offers an update when `version` in `.claude-plugin/plugin.json` changes.
 
+## [1.5.0] - 2026-10-23
+
+### Added
+
+- The ladder by default, with no `CLAUDE.md` or `AGENTS.md` edit: a session-start hook in Claude Code and Codex says that top-level coding tasks in a git repository go through model-ladder unless the user says to skip it. Turn it off with the plugin option **Use the ladder by default** or `MODEL_LADDER_AUTORUN=0`. Codex asks once to trust the hook (`/hooks`).
+
+### Changed
+
+- Everything is on after install. The usage guard is on by default at 90% in Claude Code and Codex; set `{"usageGuard": {"enabled": false}}` to turn it off. A partial `usageGuard` keeps the other field's default in Codex too.
+- The band records the subscription usage into `.model-ladder/usage.json`, and preflight and the verifier read it first, so the Claude Code usage guard needs no statusline. The statusline script stays as a fallback.
+- The band can be hidden with the plugin option **Show the band** (`/plugin configure model-ladder`); the usage guard keeps working.
+- README: what is on after install, a band screenshot, and how to turn each feature off.
+
+### Fixed
+
+- A Windows-only test compared temp paths that Windows spells two ways (short and long names).
+
 ## [1.4.0] - 2026-10-23
 
 ### Added
