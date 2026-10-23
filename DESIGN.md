@@ -2,7 +2,7 @@
 
 A plugin for Claude Code and Codex that runs a coding task on the cheapest model and effort likely to succeed, verifies the result, and escalates on failure. A router model picks the starting point and diagnoses each failure; code enforces the escalation rules.
 
-Status: v1.0.1 supports both runtimes. The Claude end-to-end scenarios, benchmark, and initial 91-test validation below are historical results. Native Codex write validation subsequently passed with the production router and verifier. See [Codex automation follow-up](README.md#codex-automation-follow-up-on-2026-10-23).
+Status: v1.1.0 supports both runtimes. The Claude end-to-end scenarios, benchmark, and initial 91-test validation below are historical results. Native Codex write validation subsequently passed with the production router and verifier. See [Codex automation follow-up](README.md#codex-automation-follow-up-on-2026-10-23).
 
 ## Goals
 

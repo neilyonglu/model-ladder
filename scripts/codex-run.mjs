@@ -9,12 +9,12 @@ import { codexExec, EnvironmentError, processRun, SCHEMAS, validate } from './co
 import { git, snapshot, changed, protectedChange, makeWorktree, applyResult, removeOwned } from './codex-worktree.mjs'
 
 export const DEFAULTS = {
-  router: { model: 'gpt-6.1-sol', effort: 'low' },
-  verifier: { model: 'gpt-6.1-sol', effort: 'low' },
+  router: { model: 'gpt-5.6-terra', effort: 'low' },
+  verifier: { model: 'gpt-6-luna', effort: 'low' },
   tiers: [
     { model: 'gpt-6-luna', efforts: ['low', 'medium', 'high'], maxEffortJump: 2 },
-    { model: 'gpt-6.1-sol', efforts: ['low', 'medium', 'high'], maxEffortJump: 2 },
-    { model: 'gpt-6-astra', efforts: ['low', 'medium', 'high', 'xhigh'], maxEffortJump: 1 },
+    { model: 'gpt-5.6-terra', efforts: ['low', 'medium', 'high'], maxEffortJump: 2 },
+    { model: 'gpt-6.1-sol', efforts: ['low', 'medium', 'high', 'xhigh'], maxEffortJump: 1 },
   ],
   maxAttempts: 4, verify: null, protected: [], keepFailed: false, timeoutMs: 600000,
 }

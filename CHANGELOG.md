@@ -2,6 +2,12 @@
 
 All notable changes to model-ladder. Versions follow [semantic versioning](https://semver.org); Claude Code only offers an update when `version` in `.claude-plugin/plugin.json` changes.
 
+## [1.1.0] - 2026-10-23
+
+### Changed
+
+- Codex defaults now mirror the Claude defaults role for role: `gpt-6-luna` for Haiku, `gpt-5.6-terra` for Sonnet and `gpt-6.1-sol` for Opus. The router runs on `gpt-5.6-terra/low` and the semantic verifier on `gpt-6-luna/low`. `gpt-6-astra` is no longer a default tier.
+
 ## [1.0.1] - 2026-10-23
 
 ### Fixed

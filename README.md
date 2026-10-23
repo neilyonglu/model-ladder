@@ -95,12 +95,12 @@ Configure Codex separately in `.codex/model-ladder.json`. Defaults use the local
 
 ```json
 {
-  "router": { "model": "gpt-6.1-sol", "effort": "low" },
-  "verifier": { "model": "gpt-6.1-sol", "effort": "low" },
+  "router": { "model": "gpt-5.6-terra", "effort": "low" },
+  "verifier": { "model": "gpt-6-luna", "effort": "low" },
   "tiers": [
     { "model": "gpt-6-luna", "efforts": ["low", "medium", "high"], "maxEffortJump": 2 },
-    { "model": "gpt-6.1-sol", "efforts": ["low", "medium", "high"], "maxEffortJump": 2 },
-    { "model": "gpt-6-astra", "efforts": ["low", "medium", "high", "xhigh"], "maxEffortJump": 1 }
+    { "model": "gpt-5.6-terra", "efforts": ["low", "medium", "high"], "maxEffortJump": 2 },
+    { "model": "gpt-6.1-sol", "efforts": ["low", "medium", "high", "xhigh"], "maxEffortJump": 1 }
   ],
   "maxAttempts": 4,
   "verify": "npm test",
@@ -138,7 +138,7 @@ The following comparison matches product positioning, not equal performance. Pri
 | General coding and agent work | Sonnet 5.5 | GPT-6.1 Sol | $2 / $10 | $2 / $10 |
 | Demanding, sustained work | Opus 5.5 | GPT-6 Astra | $4 / $20 | $10 / $50 |
 
-Keep the Codex router and semantic verifier on `gpt-6.1-sol/low` for now. This is a documented starting configuration, not a measured optimum. The router reads the repository, chooses a start cell and diagnoses failed attempts. The semantic verifier judges acceptance, reports or a project verification skill. Unlike Claude's cheap command verifier, Codex runs ordinary test commands in Node, so that path needs no verifier model.
+Codex defaults mirror the Claude defaults role for role: Luna for Haiku, Terra for Sonnet, Sol for Opus. The router runs on `gpt-5.6-terra/low` and the semantic verifier on `gpt-6-luna/low`. This is a documented starting configuration, not a measured optimum. The router reads the repository, chooses a start cell and diagnoses failed attempts. The semantic verifier judges acceptance, reports or a project verification skill. Unlike Claude's cheap command verifier, Codex runs ordinary test commands in Node, so that path needs no verifier model.
 
 [OpenAI's model guide](https://learn.chatgpt.com/docs/models) recommends starting Sol at the effort available by default in the client. The local Codex model catalog checked for this release reports `low` for Sol. The [API model page](https://developers.openai.com/api/docs/models/gpt-6.1-sol) instead documents `medium` as its API default; this runner explicitly sets effort. Claude and OpenAI effort labels do not establish equivalent reasoning budgets or quality.
 
