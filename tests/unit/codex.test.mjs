@@ -252,6 +252,43 @@ test('interrupted drafts resume in a new worktree only against the original task
   cleaned(dir)
 })
 
+function fakeUsage(percent) {
+  const home = mkdtempSync(join(tmpdir(), 'ml-home-'))
+  dirs.push(home)
+  write(home, 'sessions/s.jsonl', JSON.stringify({ payload: { rate_limits: { primary: { used_percent: percent, resets_at: Math.floor(Date.now() / 1000) + 3600 } } } }) + '\n')
+  return home
+}
+test('usageGuard validates its configuration', () => {
+  const dir = fixture({}, { usageGuard: { enabled: 'yes', threshold: 90 } })
+  assert.throws(() => loadConfig(dir), /usageGuard/)
+  write(dir, '.codex/model-ladder.json', JSON.stringify({ usageGuard: { enabled: true, threshold: 101 } }))
+  assert.throws(() => loadConfig(dir), /usageGuard/)
+  write(dir, '.codex/model-ladder.json', JSON.stringify({}))
+  assert.deepEqual(loadConfig(dir).usageGuard, { enabled: false, threshold: 90 })
+})
+test('usageGuard stops at the threshold with a handoff and releases the marker', async () => {
+  const dir = fixture({}, { usageGuard: { enabled: true, threshold: 90 } })
+  process.env.CODEX_HOME = fakeUsage(95)
+  try {
+    const result = await run(dir)
+    assert.equal(result.status, 'STOPPED', JSON.stringify(result))
+    assert.equal(result.errorCode, 'USAGE_LIMIT')
+    assert.match(result.message, /95%.*90%/)
+    assert.match(readFileSync(result.handoffPath, 'utf8'), /Fix greeting typo/)
+    assert.match(read(dir, 'greeting.mjs'), /Wellcome/)
+    cleaned(dir)
+  } finally { delete process.env.CODEX_HOME }
+})
+test('usageGuard disabled ignores high usage', async () => {
+  const dir = fixture()
+  process.env.CODEX_HOME = fakeUsage(95)
+  try {
+    const result = await run(dir)
+    assert.equal(result.status, 'VERIFIED', JSON.stringify(result))
+    assert.equal(result.handoffPath, undefined)
+  } finally { delete process.env.CODEX_HOME }
+})
+
 test('UTF-8 JSON files preserve Chinese including a PowerShell UTF-8 BOM', async () => {
   const dir = fixture()
   const file = join(dir, '.model-ladder', 'input.json')

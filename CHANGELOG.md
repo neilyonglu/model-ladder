@@ -2,7 +2,11 @@
 
 All notable changes to model-ladder. Versions follow [semantic versioning](https://semver.org); Claude Code only offers an update when `version` in `.claude-plugin/plugin.json` changes.
 
-## [Unreleased]
+## [1.2.0] - 2026-10-23
+
+### Added
+
+- Codex opt-in `usageGuard` (`enabled`, `threshold`): reads Codex session rate limits before each role and verify command, stops with `USAGE_LIMIT` at the threshold, keeps the checkpoint and writes `HANDOFF.md` (`handoffPath`).
 
 ### Changed
 

@@ -5,6 +5,7 @@ import { pathToFileURL } from 'node:url'
 import { isDeepStrictEqual } from 'node:util'
 import { TEST_PATTERNS } from '../hooks/guard.mjs'
 import { legalMoves, pickMove, isCell } from './ladder-rules.mjs'
+import { readCodexUsage } from './codex-usage.mjs'
 import { codexExec, EnvironmentError, processRun, SCHEMAS, validate } from './codex-exec.mjs'
 import { git, snapshot, changed, protectedChange, makeWorktree, applyResult, removeOwned } from './codex-worktree.mjs'
 
@@ -17,6 +18,7 @@ export const DEFAULTS = {
     { model: 'gpt-6.1-sol', efforts: ['low', 'medium', 'high', 'xhigh'], maxEffortJump: 1 },
   ],
   maxAttempts: 4, verify: null, protected: [], keepFailed: false, timeoutMs: 600000,
+  usageGuard: { enabled: false, threshold: 90 },
 }
 const EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']
 export function loadConfig(root) {
@@ -33,6 +35,8 @@ export function loadConfig(root) {
   if (!Array.isArray(config.protected) || config.protected.some((p) => typeof p !== 'string')) throw new Error('protected must be a list of globs')
   if (config.verify !== null && (typeof config.verify !== 'string' || !config.verify.trim())) throw new Error('verify must be a command or null')
   if (typeof config.keepFailed !== 'boolean') throw new Error('keepFailed must be boolean')
+  const guard = config.usageGuard
+  if (typeof guard?.enabled !== 'boolean' || typeof guard.threshold !== 'number' || !(guard.threshold >= 1 && guard.threshold <= 100)) throw new Error('usageGuard requires boolean enabled and threshold between 1 and 100')
   if (config.commit) throw new Error('Codex does not auto-commit. Commit the verified change separately.')
   return config
 }
@@ -76,6 +80,7 @@ function changedNpmScripts(cwd, baseTree, tree, verify) {
   }
   return null
 }
+const stops = (error) => error instanceof EnvironmentError || ['TIMEOUT', 'CANCELLED', 'USAGE_LIMIT'].includes(error.code)
 const label = (cell) => `${cell.model}/${cell.effort}`
 
 export async function runLadder(input, options = {}) {
@@ -120,7 +125,13 @@ export async function runLadder(input, options = {}) {
       validate(checkpoint.route, SCHEMAS.route)
       checkpoint.tree = snapshot(sourceCwd, run, 'resume')
     }
+    const checkUsage = () => {
+      if (!config.usageGuard.enabled) return
+      const percent = readCodexUsage()
+      if (percent !== null && percent >= config.usageGuard.threshold) throw Object.assign(new EnvironmentError(`Codex usage ${percent}% reached threshold ${config.usageGuard.threshold}%`), { code: 'USAGE_LIMIT' })
+    }
     const ask = async (phase, cell, cwd, prompt, sandbox = 'read-only') => {
+      checkUsage()
       options.onProgress?.(`${phase} ${label(cell)}: START`)
       const response = await codexExec({ phase, cell, cwd, run, prompt, sandbox, timeoutMs: config.timeoutMs, signal: options.signal, executable: options.executable })
       usage.push({ phase, cell: label(cell), turns: response.usage })
@@ -166,6 +177,7 @@ export async function runLadder(input, options = {}) {
         else if (!route.readOnly && verify && !files.length) verdict = { pass: false, reason: 'Worker changed nothing', output: '' }
         else {
           if (verify && !route.readOnly) {
+            checkUsage()
             options.onProgress?.(`verify-command: START (${verify})`)
             const check = await processRun(verify, [], { cwd, shell: true, timeoutMs: config.timeoutMs, signal: options.signal })
             verdict = { pass: check.code === 0, reason: check.code === 0 ? 'Verification command passed' : `Verification exited ${check.code}`, output: (check.stdout + check.stderr).slice(-12000) }
@@ -179,7 +191,7 @@ export async function runLadder(input, options = {}) {
           if (git(cwd, 'rev-parse', 'HEAD') !== baseCommit || changed(cwd, tree, after, baseTree).length) verdict = { pass: false, reason: 'Verification changed repository files', output: verdict?.output ?? '' }
         }
       } catch (error) {
-        if (error instanceof EnvironmentError || ['TIMEOUT', 'CANCELLED'].includes(error.code)) {
+        if (stops(error)) {
           attempt.reason = error.message.slice(-4000)
           retain(cwd, number)
           throw error
@@ -205,7 +217,7 @@ export async function runLadder(input, options = {}) {
       try {
         diagnosis = await ask('diagnose', config.router, cwd, `Diagnose this failed model-ladder attempt. Read only.\nTASK\n${input.task}\nCELL\n${label(cell)}\nFAILURE\n${JSON.stringify(verdict)}\nWORKER\n${JSON.stringify(worker)}\nLEGAL NEXT CELLS\n${JSON.stringify(moves)}\nRaise effort or model when stronger reasoning can help. stop_environment for missing dependencies, invalid credentials, unavailable services or permissions. stop_unclear for ambiguous goals. For raise actions choose a legal cell. For stop actions use null model and effort. Give the next worker a short hint. Each retry starts from the original snapshot.`)
       } catch (error) {
-        if (error instanceof EnvironmentError || ['TIMEOUT', 'CANCELLED'].includes(error.code)) { retain(cwd, number); throw error }
+        if (stops(error)) { retain(cwd, number); throw error }
         diagnosis = { action: 'raise_effort', model: null, effort: null, reason: error.message, hint: '' }
       }
       attempt.diagnosis = diagnosis
@@ -222,9 +234,14 @@ export async function runLadder(input, options = {}) {
     result.message = 'No verified attempt. Clarify the task, fix the environment, or adjust the configured ladder.'
     return result
   } catch (error) {
-    result.status = error instanceof EnvironmentError || ['TIMEOUT', 'CANCELLED'].includes(error.code) ? 'STOPPED' : 'ERROR'
+    result.status = stops(error) ? 'STOPPED' : 'ERROR'
     result.message = [error.message, error.stderr].filter(Boolean).join('\n').slice(-4000)
     if (error.code) result.errorCode = error.code
+    if (error.code === 'USAGE_LIMIT' && run) {
+      result.handoffPath = join(run, 'HANDOFF.md')
+      const resume = result.checkpointPath ? { ...input, resumeRun: result.runId } : input
+      writeFileSync(result.handoffPath, `# model-ladder handoff\n\n## Task\n${input.task}\n\n## Stopped\n${error.message}\n\n## Attempts\n${attempts.map((a, i) => `${i + 1}. ${a.cell}: ${a.pass ? 'PASS' : 'FAIL'} ${a.reason}`).join('\n') || 'none'}\n\n## Paths\n- worktreePath: ${result.worktreePath ?? 'none'}\n- checkpointPath: ${result.checkpointPath ?? 'none'}\n\n## Resume\nAfter the quota resets, run again with this input JSON${result.checkpointPath ? ' (adds resumeRun)' : ' (no checkpoint, so this restarts the task)'}:\n\n\`\`\`json\n${JSON.stringify(resume, null, 2)}\n\`\`\`\n`)
+    }
     return result
   } finally {
     if (ownsLock) {

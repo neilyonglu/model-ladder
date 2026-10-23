@@ -106,7 +106,8 @@ Configure Codex separately in `.codex/model-ladder.json`. Defaults use the local
   "verify": "npm test",
   "protected": [],
   "keepFailed": false,
-  "timeoutMs": 600000
+  "timeoutMs": 600000,
+  "usageGuard": { "enabled": false, "threshold": 90 }
 }
 ```
 
@@ -281,6 +282,7 @@ Optional, per project: `.claude/model-ladder.json`. Each key you set replaces it
 | `protected` | `[]` | Extra globs no worker may modify |
 | `commit` | `false` | Commit the verified change |
 | `keepFailed` | `false` | Keep failed attempts' worktrees for debugging |
+| `usageGuard` | `{"enabled": false, "threshold": 90}` | When enabled, read the latest Codex session `rate_limits` before each role and the verify command; at or above `threshold` percent (1-100) stop with `USAGE_LIMIT`, keep the checkpoint and write `HANDOFF.md` (`handoffPath`). Unknown or expired usage never blocks |
 
 <details>
 <summary>Example: a three-rung ladder that commits</summary>
