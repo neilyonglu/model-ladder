@@ -7,7 +7,7 @@ import { ARTIFACTS } from './ladder-rules.mjs'
 export function git(cwd, ...args) {
   return execFileSync('git', args, { cwd, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] }).trimEnd()
 }
-const paths = ['--', '.', ':!.model-ladder', ':!.claude/worktrees', ...ARTIFACTS.map((glob) => `:(glob,exclude)${glob}`)]
+const paths = ['--', '.', ':!.model-ladder', ':!.claude/worktrees']
 export function snapshot(cwd, run, name) {
   const index = join(run, `${name}.index`)
   const env = { ...process.env, GIT_INDEX_FILE: index }
@@ -19,8 +19,10 @@ export function snapshot(cwd, run, name) {
     return g('write-tree')
   } finally { rmSync(index, { force: true }) }
 }
-export function changed(cwd, from, to) {
-  return git(cwd, 'diff', '--no-ext-diff', '--name-only', '--no-renames', '-z', from, to, ...paths).split('\0').filter(Boolean)
+export function changed(cwd, from, to, artifactBaseline = from) {
+  const files = git(cwd, 'diff', '--no-ext-diff', '--name-only', '--no-renames', '-z', from, to, ...paths).split('\0').filter(Boolean)
+  const tracked = new Set(git(cwd, 'ls-tree', '-r', '--name-only', '-z', artifactBaseline).split('\0'))
+  return files.filter((file) => !isProtected(file, ARTIFACTS) || tracked.has(file))
 }
 export function protectedChange(cwd, baseTree, tree, patterns) {
   return changed(cwd, baseTree, tree).find((file) => isProtected(file, patterns))
@@ -34,9 +36,9 @@ export function makeWorktree(root, run, number, baseCommit, baseTree) {
 }
 export function applyResult(root, run, baseTree, resultTree, baseCommit) {
   const files = changed(root, baseTree, resultTree)
-  const patch = join(run, 'result.patch')
-  writeFileSync(patch, execFileSync('git', ['diff', '--no-ext-diff', '--no-textconv', '--binary', '--full-index', baseTree, resultTree, ...paths], { cwd: root, maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] }))
   if (!files.length) return { applied: false, files, note: 'No file changes' }
+  const patch = join(run, 'result.patch')
+  writeFileSync(patch, execFileSync('git', ['diff', '--no-ext-diff', '--no-textconv', '--no-renames', '--binary', '--full-index', baseTree, resultTree, '--', ...files.map((file) => `:(literal)${file}`)], { cwd: root, maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] }))
   try {
     if (git(root, 'rev-parse', 'HEAD') !== baseCommit) throw new Error('Original checkout changed commits')
     git(root, 'apply', '--check', patch)

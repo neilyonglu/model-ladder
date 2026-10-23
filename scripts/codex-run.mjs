@@ -176,7 +176,7 @@ export async function runLadder(input, options = {}) {
           const after = snapshot(cwd, run, `verify-${number}`)
           const tampered = protectedChange(cwd, baseTree, after, protection) ?? changedNpmScripts(cwd, baseTree, after, verify)
           if (tampered) verdict = { pass: false, reason: `Modified protected file ${tampered} during verification`, output: '' }
-          if (git(cwd, 'rev-parse', 'HEAD') !== baseCommit || changed(cwd, tree, after).length) verdict = { pass: false, reason: 'Verification changed repository files', output: verdict?.output ?? '' }
+          if (git(cwd, 'rev-parse', 'HEAD') !== baseCommit || changed(cwd, tree, after, baseTree).length) verdict = { pass: false, reason: 'Verification changed repository files', output: verdict?.output ?? '' }
         }
       } catch (error) {
         if (error instanceof EnvironmentError || ['TIMEOUT', 'CANCELLED'].includes(error.code)) {

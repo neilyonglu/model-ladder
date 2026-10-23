@@ -2,10 +2,11 @@
 
 All notable changes to model-ladder. Versions follow [semantic versioning](https://semver.org); Claude Code only offers an update when `version` in `.claude-plugin/plugin.json` changes.
 
-## [Unreleased]
+## [1.0.1] - 2026-10-23
 
 ### Fixed
 
+- Check and apply changes to baseline-tracked files under artifact directories instead of silently ignoring them. Newly generated artifacts remain excluded.
 - Add UTF-8 JSON file input for Codex, including Windows PowerShell BOM support, and distinguish waiting states with a nonzero exit code.
 - Check task completion independently after passing project tests. Allow editing-task verifiers to create build artifacts while rejecting source tampering.
 - Preserve partial logs and unverified worktrees on interrupted Codex attempts. Resume from a checked checkpoint in a fresh worktree, with bounded automatic timeout continuation in the skill.

@@ -118,7 +118,7 @@ Successful patches are applied to the working tree without committing or pushing
 
 Interrupted workers and verifiers retain their unverified worktree and return `checkpointPath` and `resumeRun`. To continue, add that `resumeRun` to the original input JSON and invoke the runner again. Keep the original task, acceptance criteria, and authorized `allowDirty` value. Resume requires the same repository commit, source snapshot, and ladder configuration. The runner checks protected files, starts a new worktree containing the draft, and repeats verification before applying changes. The source worktree remains available for inspection. Each role still has the configured `timeoutMs` limit; the Codex skill automatically resumes a timeout at most twice.
 
-Artifact paths such as `dist`, `build`, and `target` are excluded from patch and tampering comparisons, including tracked files in those directories. Keep source and verification inputs outside these paths.
+Newly generated artifact files under paths such as `dist`, `build`, and `target` are excluded from patch and tampering comparisons. Files already present in the baseline Git tree remain checked and included in patches, even under artifact paths.
 
 On Windows, the Codex workspace-write sandbox must be working before a worker can run. A host sandbox setup or ACL error stops the run; repair the Codex sandbox setup and retry. The runner does not weaken sandbox settings automatically.
 
@@ -319,7 +319,7 @@ Every run appends a line to `.model-ladder/history.jsonl`: which cells were trie
 ## 🧪 Development
 
 ```sh
-node --test tests/unit/*.test.mjs            # 91 tests, no dependencies, no model calls
+node --test tests/unit/*.test.mjs            # 105 tests, no dependencies, no model calls
 node tests/e2e/run.mjs --dry                 # plant every scenario and run pytest, no model calls
 node tests/e2e/run.mjs [scenario ...]        # end-to-end via claude -p (about $0.2 per scenario)
 node tests/e2e/bench.mjs                     # 7 tasks x 3 strategies (about $4.5)
@@ -339,7 +339,15 @@ These results were observed locally on Windows with Node.js 24.20.0 and Codex CL
 | Native Codex read-only task | Passed routing, worker and independent verification with a read-only sandbox and controlled `--ignore-user-config` invocation |
 | Native Codex write task | **Blocked by the host Windows sandbox ACL error** `helper_unknown_error: read ACL run had errors`; no patch applied |
 
-The offline suite uses a fake Codex process with real temporary Git repositories. It covers escalation and fallback, protected tests and verification inputs, npm workspace scripts, dirty snapshots and index preservation, exact patch bytes, conflicts, timeouts and cleanup. These passing checks do not establish that the native Codex write flow passed. That flow still needs a successful smoke run after the host sandbox is repaired. No global settings or sandbox bypass flags were used to make the write test pass.
+The offline suite uses a fake Codex process with real temporary Git repositories. It covers escalation and fallback, protected tests and verification inputs, npm workspace scripts, dirty snapshots and index preservation, exact patch bytes, conflicts, timeouts and cleanup. At that time, these checks did not establish that the native Codex write flow passed. No global settings or sandbox bypass flags were used.
+
+### Codex automation follow-up on 2026-10-23
+
+The production-role native smoke test passed on 2026-10-22 with a Sol router, Luna worker, and Sol verifier. The runner returned `VERIFIED`, applied only `greeting.mjs`, and preserved the Git index. The outer test process required normal permission escalation to locate the user's Codex home; child Codex sessions retained their read-only or workspace-write sandboxes. This supersedes the earlier native-write blocker above.
+
+The runner now preserves interrupted drafts and partial logs, supports checked continuation with `resumeRun`, accepts UTF-8 JSON files on PowerShell, and verifies task completion independently after project tests. Tracked baseline files under artifact directories also participate in protection and patch checks.
+
+The complete offline suite passed on 2026-10-23 with **105 passed, 0 failed**. Four new real-Git checks cover tracked artifact edits and deletions, ignored new artifacts, literal patch filenames, and verifier rebuilds against the original baseline. The updated runtime files were copied to the local installed plugin with backups, and their SHA-256 hashes matched this checkout.
 
 ## 🙏 Credits
 
