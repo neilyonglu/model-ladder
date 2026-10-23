@@ -3,6 +3,7 @@
 //    or  { "task": "...", "error": "..." }    the workflow crashed
 //    or  { "task": "...", "aborted": "..." }  the user stopped before the run
 // Always removes the run marker, so a crash or a "no" never leaves the guard armed.
+import { execFileSync } from 'node:child_process'
 import { appendFileSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -15,7 +16,8 @@ function apply(root, run, state, winner) {
   const resultTree = git(wt, 'write-tree')
   // Against BASE_TREE, not HEAD: the user's own uncommitted changes stay out of the patch.
   const patch = join(run, 'result.patch')
-  writeFileSync(patch, git(root, 'diff', '--binary', state.baseTree, resultTree) + '\n')
+  // Raw output, not git(): trimEnd() would strip a final blank context line and corrupt the patch.
+  writeFileSync(patch, execFileSync('git', ['diff', '--binary', state.baseTree, resultTree], { cwd: root, maxBuffer: 64 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] }))
   const files = git(root, 'diff', '--name-only', state.baseTree, resultTree).split('\n').filter(Boolean)
   if (!files.length) return { applied: false, files, note: 'read-only attempt, nothing to apply' }
   const applied = tryGit(root, 'apply', patch)
@@ -63,11 +65,33 @@ function report(task, result, outcome, notes) {
     `Applied   ${result.status === 'VERIFIED' ? applied : 'nothing (no verified attempt)'}`,
     `Tokens    ${result.tokens} output (route + attempts)`,
   ]
+  if (outcome.handoff) lines.push(`Handoff   ${outcome.handoff}`)
   // A read-only attempt's report is the deliverable; nothing else carries it back.
   if (result.status === 'VERIFIED' && !outcome.files?.length && result.winner?.summary) lines.push('', 'Report', '', result.winner.summary)
   if (result.final) lines.push('', `Why       ${result.final.reason}`, `Next      ${result.final.suggestion}`)
   for (const note of notes) lines.push('', note)
   return lines.join('\n')
+}
+
+function handoff(task, result, worktree) {
+  const attempts = result.attempts.map((a, i) => `${i + 1}. ${a.cell}: ${a.pass ? 'PASS' : 'FAIL'} ${a.reason}`)
+  return `# model-ladder handoff
+
+## Task
+${task}
+
+## Stopped
+USAGE_LIMIT: ${result.final?.reason ?? 'usage reached the threshold'}
+
+## Attempts
+${attempts.join('\n') || 'none'}
+
+## Worktree
+${worktree ?? 'none kept (the last attempt had no worktree)'}
+
+## Resume
+After the usage limit resets, run \`/model-ladder:run ${task}\` again.${worktree ? ` The kept worktree above holds the last attempt's code; look at it for what was already tried.` : ''}
+`
 }
 
 function main(input) {
@@ -91,6 +115,9 @@ function main(input) {
     keep = result.attempts.map((a) => a.worktreePath).filter(Boolean)
     if (keep.length) notes.push(`Failed attempts kept (keepFailed): ${keep.join(', ')}`)
   }
+  // The last attempt's worktree is what a resumed run can look at.
+  const lastWorktree = result?.status === 'USAGE_LIMIT' ? result.attempts.map((a) => a.worktreePath).filter(Boolean).at(-1) : null
+  if (lastWorktree && !keep.includes(lastWorktree)) keep.push(lastWorktree)
   cleanup(root, state, keep)
   for (const f of ['run.json', 'setup.patch', 'state.json', 'index']) rmSync(join(run, f), { force: true })
 
@@ -107,6 +134,11 @@ function main(input) {
     committed: Boolean(outcome.committed),
     error: error ?? null,
   })}\n`)
+
+  if (result?.status === 'USAGE_LIMIT') {
+    outcome.handoff = join(run, 'HANDOFF.md')
+    writeFileSync(outcome.handoff, handoff(task, result, lastWorktree))
+  }
 
   const ignored = (p) => tryGit(root, 'check-ignore', '-q', p).ok
   if (!ignored('.model-ladder/history.jsonl') || !ignored('.claude/worktrees/x')) {

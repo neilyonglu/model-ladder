@@ -18,7 +18,8 @@ Run `node "${CLAUDE_PLUGIN_ROOT}/scripts/preflight.mjs"` and act on `status`:
 
 - `ERROR`: show `message` and stop.
 - `STALE_RUN`, `OVERRIDDEN`, `DIRTY`: ask the user (show `message`, or the `files` for DIRTY: "run on top of these uncommitted changes?"). On yes, rerun preflight with every flag granted so far: `--clear-stale`, `--ignore-env`, `--allow-dirty`. On no, stop.
-- `READY`: keep `workflowArgs`.
+- `USAGE_LIMIT`: show `message` and stop. Do not call the workflow or the finish script.
+- `READY`: keep `workflowArgs`. If `usageNote` is set, show it to the user first, then continue.
 
 ## 2. Workflow
 
@@ -34,6 +35,8 @@ If it returns `status: "NEEDS_INPUT"`:
 - If the user declines either, go to step 3 with `{ "task": "<task>", "aborted": "<why>" }`.
 
 If it returns `status: "DIRECT"`, the router judged the task small and this session too large for the ladder to pay off. Go to step 3 with that result.
+
+If it returns `status: "USAGE_LIMIT"`, the usage guard stopped the run. Go to step 3 with that result unchanged; finish writes `HANDOFF.md`.
 
 If the Workflow call itself fails, go to step 3 with `{ "task": "<task>", "error": "<the error>" }`.
 

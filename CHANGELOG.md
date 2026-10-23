@@ -2,6 +2,16 @@
 
 All notable changes to model-ladder. Versions follow [semantic versioning](https://semver.org); Claude Code only offers an update when `version` in `.claude-plugin/plugin.json` changes.
 
+## [1.3.0] - 2026-10-23
+
+### Added
+
+- Claude Code opt-in `usageGuard` (`enabled`, `threshold`): a statusline script (`scripts/usage-statusline.mjs`) saves the Pro/Max 5-hour and weekly usage; preflight returns `USAGE_LIMIT` at the threshold before writing a run marker, the verifier reports usage after each attempt, and a failed attempt at the threshold stops the run with `USAGE_LIMIT`, keeps the last worktree and writes `.model-ladder/HANDOFF.md`.
+
+### Fixed
+
+- Claude Code finish no longer corrupts the result patch when it ends in a blank context line; such verified results were reported as "does not apply cleanly".
+
 ## [1.2.0] - 2026-10-23
 
 ### Added

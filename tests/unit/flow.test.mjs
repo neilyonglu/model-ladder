@@ -28,7 +28,7 @@ function harness(steps) {
     const step = steps.shift()
     assert.ok(step, `unexpected agent call: ${opts.label}`)
     assert.ok(opts.label.startsWith(step.label), `expected ${step.label}, got ${opts.label}`)
-    calls.push({ label: opts.label, model: opts.model, effort: opts.effort, isolation: opts.isolation, agentType: opts.agentType, prompt })
+    calls.push({ label: opts.label, schema: opts.schema, model: opts.model, effort: opts.effort, isolation: opts.isolation, agentType: opts.agentType, prompt })
     spent += 10
     if (step.throws) throw new Error(step.throws)
     return step.result
@@ -269,4 +269,45 @@ test('forceLadder overrides DIRECT', async () => {
 
 test('a router that fails to report stops the run', async () => {
   await assert.rejects(call([{ label: 'route', throws: 'boom' }]), /the router failed: boom/)
+})
+
+const usageGuard = { threshold: 90, command: 'node "/p/usage-statusline.mjs" --percent' }
+
+test('usageGuard off: the verifier prompt and schema are unchanged', async () => {
+  const { calls } = await runWith([{ label: 'worker', result: done }, { label: 'verify', result: pass }])
+  assert.doesNotMatch(calls[1].prompt, /usage/)
+  assert.deepEqual(calls[1].schema.required, ['pass', 'reason', 'output'])
+  assert.equal('usage' in calls[1].schema.properties, false)
+})
+
+test('usageGuard on: the verifier runs the command last and must report usage', async () => {
+  const { calls } = await runWith([{ label: 'worker', result: done }, { label: 'verify', result: { ...pass, usage: '10' } }], { usageGuard })
+  assert.ok(calls[1].prompt.trimEnd().endsWith(`run \`${usageGuard.command}\` and put its output unchanged in the usage field.`))
+  assert.deepEqual(calls[1].schema.required, ['pass', 'reason', 'output', 'usage'])
+  assert.deepEqual(calls[1].schema.properties.usage, { type: 'string' })
+})
+
+test('usageGuard on: a failed attempt at the threshold stops with USAGE_LIMIT, no diagnosis', async () => {
+  const { out } = await runWith([{ label: 'worker', result: done }, { label: 'verify', result: { ...fail, usage: '92.5' } }], { usageGuard })
+  assert.equal(out.status, 'USAGE_LIMIT')
+  assert.equal(out.winner, null)
+  assert.equal(out.final.reason, 'Claude usage 92.5% reached the usageGuard threshold of 90%.')
+  assert.match(out.final.suggestion, /HANDOFF\.md/)
+  assert.deepEqual(out.attempts.map((a) => [a.pass, a.worktreePath]), [[false, '/wt']])
+})
+
+test('usageGuard on: below the threshold or unknown usage keeps escalating', async () => {
+  for (const usage of ['89', 'unknown', '']) {
+    const { out } = await runWith([
+      { label: 'worker', result: done }, { label: 'verify', result: { ...fail, usage } },
+      { label: 'diagnose', result: diag('raise_effort', 'haiku', 'medium') },
+      { label: 'worker', result: done }, { label: 'verify', result: { ...pass, usage } },
+    ], { usageGuard })
+    assert.equal(out.status, 'VERIFIED', usage)
+  }
+})
+
+test('usageGuard on: a passing attempt is VERIFIED even above the threshold', async () => {
+  const { out } = await runWith([{ label: 'worker', result: done }, { label: 'verify', result: { ...pass, usage: '99' } }], { usageGuard })
+  assert.equal(out.status, 'VERIFIED')
 })

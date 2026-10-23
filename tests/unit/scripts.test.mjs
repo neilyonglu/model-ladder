@@ -32,6 +32,18 @@ function repo(files = { 'a.py': 'a = 1\n', 'b.py': 'b = 1\n', 'tests/test_a.py':
 }
 
 const preflight = (dir, ...flags) => JSON.parse(execFileSync('node', [script('preflight'), ...flags], { cwd: dir, encoding: 'utf8' }))
+
+// Writes the usage file the statusline script would, in a temp CLAUDE_CONFIG_DIR, and runs preflight against it.
+function guarded(dir, percent, guard = { enabled: true, threshold: 90 }) {
+  write(dir, '.claude/model-ladder.json', JSON.stringify({ usageGuard: guard }))
+  git(dir, 'add', '-A')
+  git(dir, 'commit', '-q', '-m', 'config')
+  const config = mkdtempSync(join(tmpdir(), 'ml-claude-'))
+  dirs.push(config)
+  const now = Date.now() / 1000
+  if (percent !== null) writeFileSync(join(config, 'model-ladder-usage.json'), JSON.stringify({ updatedAt: now, five_hour: { used_percentage: percent, resets_at: now + 3600 }, seven_day: null }))
+  return JSON.parse(execFileSync('node', [script('preflight')], { cwd: dir, encoding: 'utf8', env: { ...process.env, CLAUDE_CONFIG_DIR: config } }))
+}
 const finish = (dir, input) => execFileSync('node', [script('finish')], {
   cwd: dir, input: JSON.stringify(input), encoding: 'utf8', env: { ...process.env, MODEL_LADDER_NO_UPDATE_CHECK: '1' },
 })
@@ -135,6 +147,14 @@ test('VERIFIED: applies only the worker change, cleans up, writes history', () =
   assert.equal(history.at(-1).applied, true)
 })
 
+test('VERIFIED: a patch ending in a blank context line still applies', () => {
+  const dir = repo({ 'z.py': 'x = 1\ny = 1\n\n' })
+  preflight(dir)
+  const wt = worktree(dir, 'wf_1', { 'z.py': 'x = 2\ny = 1\n\n' })
+  assert.match(finish(dir, { task: 'fix z', result: verified(wt, ['z.py']) }), /to the working tree/)
+  assert.equal(read(dir, 'z.py'), 'x = 2\ny = 1\n\n')
+})
+
 test('dirty run: the user change stays, the patch carries only the worker change', () => {
   const dir = repo()
   write(dir, 'a.py', 'a = 2\n')
@@ -221,6 +241,72 @@ test('aborted or crashed runs still disarm the guard', () => {
   preflight(dir)
   assert.match(finish(dir, { task: 't', error: 'workflow crashed' }), /ERROR/)
   assert.ok(!existsSync(join(dir, '.model-ladder', 'run.json')))
+})
+
+test('usageGuard on at the threshold: USAGE_LIMIT before any run marker', () => {
+  const dir = repo()
+  const out = guarded(dir, 95)
+  assert.equal(out.status, 'USAGE_LIMIT')
+  assert.match(out.message, /95%.*90%/)
+  assert.equal(existsSync(join(dir, '.model-ladder/run.json')), false)
+  assert.equal(existsSync(join(dir, '.model-ladder/state.json')), false)
+})
+
+test('usageGuard on below the threshold: READY with the usage command', () => {
+  const dir = repo()
+  const out = guarded(dir, 50)
+  assert.equal(out.status, 'READY')
+  assert.equal(out.usageNote, undefined)
+  assert.equal(out.workflowArgs.usageGuard.threshold, 90)
+  const file = out.workflowArgs.usageGuard.command.match(/^node "(.+usage-statusline\.mjs)" --percent$/)?.[1]
+  assert.ok(file && existsSync(file), out.workflowArgs.usageGuard.command)
+  assert.ok(existsSync(join(dir, '.model-ladder/run.json')))
+})
+
+test('usageGuard on with unknown usage: READY with a usageNote', () => {
+  const out = guarded(repo(), null)
+  assert.equal(out.status, 'READY')
+  assert.match(out.usageNote, /statusline|will not take effect/)
+  assert.ok(out.workflowArgs.usageGuard)
+})
+
+test('usageGuard off: no usageGuard in workflowArgs, even with high usage on file', () => {
+  const out = guarded(repo(), 99, { enabled: false })
+  assert.equal(out.status, 'READY')
+  assert.equal('usageGuard' in out.workflowArgs, false)
+  assert.equal(out.usageNote, undefined)
+})
+
+test('invalid usageGuard is an ERROR naming the problem', () => {
+  assert.match(guarded(repo(), 10, { enabled: 'yes', threshold: 0 }).message, /usageGuard\.enabled.*usageGuard\.threshold/)
+})
+
+test('USAGE_LIMIT: keeps the last attempt worktree, writes HANDOFF.md, disarms the guard', () => {
+  const dir = repo()
+  preflight(dir)
+  const first = worktree(dir, 'wf_1', { 'b.py': 'b = 3\n' })
+  const last = worktree(dir, 'wf_2', { 'b.py': 'b = 4\n' })
+  const attempt = (wt, cell) => ({ cell, pass: false, reason: 'tests fail', action: null, actionReason: null, tokens: 10, worktreePath: wt })
+  const result = {
+    ...verified(last, []), status: 'USAGE_LIMIT', winner: null,
+    attempts: [attempt(first, 'haiku/low'), attempt(last, 'haiku/medium')],
+    final: { reason: 'Claude usage 95% reached the usageGuard threshold of 90%.', suggestion: 'later' },
+  }
+  const report = finish(dir, { task: 'fix b', result })
+  const handoff = join(dir, '.model-ladder', 'HANDOFF.md')
+  assert.match(report, /model-ladder ── USAGE_LIMIT/)
+  assert.ok(report.includes(`Handoff   ${handoff}`), report)
+  const text = readFileSync(handoff, 'utf8')
+  assert.match(text, /fix b/)
+  assert.match(text, /Claude usage 95% reached/)
+  assert.match(text, /1\. haiku\/low: FAIL tests fail/)
+  assert.match(text, /2\. haiku\/medium: FAIL tests fail/)
+  assert.ok(text.includes(last))
+  assert.ok(text.includes('/model-ladder:run fix b'))
+  assert.ok(existsSync(last))
+  assert.ok(!existsSync(first))
+  assert.ok(!existsSync(join(dir, '.model-ladder', 'run.json')))
+  assert.equal(read(dir, 'b.py'), 'b = 1\n')
 })
 
 test('preflight snapshot failure releases its own marker and temporary index', () => {

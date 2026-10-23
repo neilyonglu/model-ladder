@@ -4,13 +4,15 @@
 //   STALE_RUN   a run marker exists          -> ask; rerun with --clear-stale
 //   OVERRIDDEN  env vars override the ladder -> ask; rerun with --ignore-env
 //   DIRTY       uncommitted changes (files)  -> ask; rerun with --allow-dirty
+//   USAGE_LIMIT usageGuard is on and the subscription usage is at the threshold -> stop
 //   READY       workflowArgs to pass to the model-ladder:ladder workflow
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
-import { pathToFileURL } from 'node:url'
+import { dirname, join } from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { ALWAYS_PROTECTED, TEST_PATTERNS } from '../hooks/guard.mjs'
 import { git, print, repoRoot, runDir, tryGit, worktrees } from './common.mjs'
+import { readClaudeUsage } from './usage-statusline.mjs'
 
 export const DEFAULTS = {
   router: { model: 'sonnet', effort: 'low' },
@@ -25,13 +27,15 @@ export const DEFAULTS = {
   protected: [],
   commit: false,
   keepFailed: false,
+  usageGuard: { enabled: false, threshold: 90 },
 }
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max']
 const OWN = [':!.claude/worktrees', ':!.model-ladder']
 
 export function loadConfig(root) {
   const path = join(root, '.claude', 'model-ladder.json')
-  const config = { ...DEFAULTS, ...(existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : {}) }
+  const user = existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : {}
+  const config = { ...DEFAULTS, ...user, usageGuard: { ...DEFAULTS.usageGuard, ...user.usageGuard } }
   const problems = []
   const cell = (c, name) => (typeof c?.model === 'string' && EFFORTS.includes(c?.effort)) || problems.push(`${name} needs a model and an effort (${EFFORTS.join(', ')})`)
   cell(config.router, 'router')
@@ -44,6 +48,9 @@ export function loadConfig(root) {
   }
   if (!(config.maxAttempts >= 1)) problems.push('maxAttempts must be 1 or more')
   if (!Array.isArray(config.protected)) problems.push('protected must be a list of globs')
+  const guard = config.usageGuard
+  if (typeof guard.enabled !== 'boolean') problems.push('usageGuard.enabled must be true or false')
+  if (typeof guard.threshold !== 'number' || !(guard.threshold >= 1 && guard.threshold <= 100)) problems.push('usageGuard.threshold must be a number from 1 to 100')
   return { config, problems }
 }
 
@@ -68,6 +75,13 @@ function main(flags) {
   }
   if (loaded.problems.length) return { status: 'ERROR', message: `.claude/model-ladder.json: ${loaded.problems.join('; ')}` }
   const { config } = loaded
+
+  // Before the run marker, so stopping here leaves no state behind.
+  const guard = config.usageGuard
+  const usage = guard.enabled ? readClaudeUsage() : null
+  if (usage !== null && usage >= guard.threshold) {
+    return { status: 'USAGE_LIMIT', message: `Claude usage is at ${usage}%, at or above the usageGuard threshold of ${guard.threshold}%. Try again after the limit resets.` }
+  }
 
   const overrides = ['CLAUDE_CODE_EFFORT_LEVEL', 'CLAUDE_CODE_SUBAGENT_MODEL_FORCE'].filter((v) => process.env[v])
   if (overrides.length && !flags.has('--ignore-env')) {
@@ -111,7 +125,13 @@ function main(flags) {
         hasVerifySkill: existsSync(join(root, '.claude', 'skills', 'verify', 'SKILL.md')),
         setupPatch,
         setupFiles,
+        ...(guard.enabled && {
+          usageGuard: { threshold: guard.threshold, command: `node "${dirname(fileURLToPath(import.meta.url))}/usage-statusline.mjs" --percent` },
+        }),
       },
+      ...(guard.enabled && usage === null && {
+        usageNote: 'usageGuard is on, but no recent Claude usage was found. Until the model-ladder statusline script is set up (see the README), the guard will not take effect.',
+      }),
     }
   } catch (error) {
     rmSync(marker, { force: true })

@@ -106,6 +106,11 @@ const VERDICT_SCHEMA = {
   required: ['pass', 'reason', 'output'],
 }
 
+// With usageGuard on, the verifier also reports the subscription usage (see scripts/usage-statusline.mjs).
+const verdictSchema = () => (args.usageGuard
+  ? { ...VERDICT_SCHEMA, properties: { ...VERDICT_SCHEMA.properties, usage: { type: 'string' } }, required: [...VERDICT_SCHEMA.required, 'usage'] }
+  : VERDICT_SCHEMA)
+
 const DIAGNOSIS_SCHEMA = {
   type: 'object',
   properties: {
@@ -250,7 +255,9 @@ ${bullets(plan.acceptance)}
 The worker claims: ${work.summary}
 Do not trust the claim; check.
 
-Return output as the last ${OUTPUT_LINES} lines of what you ran.`
+Return output as the last ${OUTPUT_LINES} lines of what you ran.${args.usageGuard ? `
+
+Final step, after everything above: run \`${args.usageGuard.command}\` and put its output unchanged in the usage field.` : ''}`
 }
 
 function diagnosePrompt(history, moves) {
@@ -323,7 +330,7 @@ async function run(plan) {
     else if (!work.filesChanged.length && plan.verify) verdict = { pass: false, reason: 'worker changed nothing', output: '' }
     else {
       const verifier = await measured(verifyPrompt(plan, work), {
-        label: 'verify', phase: `Attempt ${n}`, schema: VERDICT_SCHEMA, agentType: 'model-ladder:verifier', ...verifierCell,
+        label: 'verify', phase: `Attempt ${n}`, schema: verdictSchema(), agentType: 'model-ladder:verifier', ...verifierCell,
       })
       verifyTokens = verifier.tokens
       verdict = verifier.result ?? { pass: false, reason: `verifier ${verifier.error}`, output: '' }
@@ -334,6 +341,15 @@ async function run(plan) {
     log(`#${n} ${label(cell)}: ${verdict.pass ? 'PASS' : `FAIL (${verdict.reason})`}`)
 
     if (verdict.pass) return done('VERIFIED', work, null)
+
+    // "unknown" or an empty usage is not a number and never stops the run.
+    const usage = String(verdict.usage ?? '').trim() === '' ? NaN : Number(verdict.usage)
+    if (args.usageGuard && usage >= args.usageGuard.threshold) {
+      return done('USAGE_LIMIT', null, {
+        reason: `Claude usage ${usage}% reached the usageGuard threshold of ${args.usageGuard.threshold}%.`,
+        suggestion: 'Run /model-ladder:run again after the limit resets; see HANDOFF.md.',
+      })
+    }
 
     const moves = legalMoves(cell, config.tiers)
     if (n === config.maxAttempts || !moves.length) break

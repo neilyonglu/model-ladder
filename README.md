@@ -284,6 +284,21 @@ Optional, per project: `.claude/model-ladder.json`. Each key you set replaces it
 | `keepFailed` | `false` | Keep failed attempts' worktrees for debugging |
 | `usageGuard` | `{"enabled": false, "threshold": 90}` | When enabled, read the latest Codex session `rate_limits` before each role and the verify command; at or above `threshold` percent (1-100) stop with `USAGE_LIMIT`, keep the checkpoint and write `HANDOFF.md` (`handoffPath`). Unknown or expired usage never blocks |
 
+### Claude Code usage guard
+
+Opt-in. With `usageGuard` on, the ladder stops before it burns the rest of your Claude subscription (Pro/Max) limit. Preflight refuses to start at or above `threshold` percent of the 5-hour or weekly limit; after each failed attempt the verifier re-reads the usage, and at the threshold the run stops with `USAGE_LIMIT`, keeps the last attempt's worktree and writes `.model-ladder/HANDOFF.md`. Re-run `/model-ladder:run` after the limit resets.
+
+1. Enable it in `.claude/model-ladder.json`: `{ "usageGuard": { "enabled": true, "threshold": 90 } }`.
+2. A plugin cannot set your statusline, so copy the plugin's `scripts/usage-statusline.mjs` to `~/.claude/model-ladder-usage-statusline.mjs` (the plugin cache path changes with every version) and add this to `~/.claude/settings.json`:
+
+```json
+"statusLine": { "type": "command", "command": "node ~/.claude/model-ladder-usage-statusline.mjs", "refreshInterval": 60 }
+```
+
+If you already have a statusline script, also pipe its stdin to this one: it saves the usage to `${CLAUDE_CONFIG_DIR:-~/.claude}/model-ladder-usage.json`.
+
+Limits: only Pro/Max report usage; the number can lag by up to a few minutes, and a file older than 15 minutes counts as unknown (never blocks; preflight then shows a note). The check runs when an attempt ends, so an attempt in progress is never interrupted.
+
 <details>
 <summary>Example: a three-rung ladder that commits</summary>
 
