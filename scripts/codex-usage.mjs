@@ -17,19 +17,26 @@ const newest = (dir) => {
   return best
 }
 // Highest used_percent among unexpired windows of the latest Codex session; null = unknown (never blocks).
-export function readCodexUsage(home = process.env.CODEX_HOME ?? join(homedir(), '.codex'), now = Date.now() / 1000) {
+// details: true returns labelled 5h/7d windows instead, with null for unknown/expired windows.
+export function readCodexUsage(home = process.env.CODEX_HOME ?? join(homedir(), '.codex'), now = Date.now() / 1000, { details = false } = {}) {
+  const unknown = details ? { fiveHour: null, sevenDay: null } : null
   try {
     const file = newest(join(home, 'sessions'))
-    if (!file) return null
+    if (!file) return unknown
     const lines = readFileSync(file.path, 'utf8').split('\n')
     for (let i = lines.length - 1; i >= 0; i--) {
       if (!lines[i].includes('rate_limits')) continue
       let limits
       try { limits = find(JSON.parse(lines[i]), 'rate_limits') } catch { continue }
       if (!limits) continue
-      const live = [limits.primary, limits.secondary].filter((w) => typeof w?.used_percent === 'number' && w.resets_at > now).map((w) => w.used_percent)
-      return live.length ? Math.max(...live) : null
+      const live = [limits.primary, limits.secondary].filter((w) => Number.isFinite(w?.used_percent) && w.resets_at > now)
+      if (details) {
+        // Only label known window durations; primary/secondary are not guaranteed to be 5h/7d.
+        const percent = (minutes) => live.find((w) => w.window_minutes === minutes)?.used_percent ?? null
+        return { fiveHour: percent(300), sevenDay: percent(10080) }
+      }
+      return live.length ? Math.max(...live.map((w) => w.used_percent)) : null
     }
   } catch {}
-  return null
+  return unknown
 }

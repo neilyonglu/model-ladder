@@ -2,6 +2,21 @@
 
 All notable changes to model-ladder. Versions follow [semantic versioning](https://semver.org); Claude Code only offers an update when `version` in `.claude-plugin/plugin.json` changes.
 
+## [1.6.0] - 2026-10-23
+
+### Added
+
+- Codex progress snapshots show quota usage, each role's model/effort, elapsed time and task whenever a role starts or ends. Verification commands are included, and completed roles show success or failure with frozen elapsed time.
+- Atomic `.model-ladder/live.json` updates at role start/end and final cleanup, including handled cancellation and idle timeout.
+- `scripts/watch.mjs` refreshes the table every second, truncates tasks to terminal width with Chinese characters counted as two cells, and hides completed rows after ten seconds. `--guard on|off` and `--threshold 1–100` update the project config without replacing other fields; invalid arguments leave it unchanged.
+- Offline unit coverage and a fake-Codex runner/monitor demonstration, including an optional terminal redraw preview.
+
+### Changed
+
+- Codex usage reading can return separate unexpired 5-hour and weekly windows while preserving the guard's existing highest-window check. Unknown or unidentifiable display windows show `?`.
+- A running Codex ladder reloads usage guard settings at the next role or verification-command boundary.
+- README documents progress output, monitor commands, state format and limitations.
+
 ## [1.5.0] - 2026-10-23
 
 ### Added

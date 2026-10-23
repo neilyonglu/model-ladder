@@ -102,6 +102,45 @@ Configure Codex separately in `.codex/model-ladder.json`. Defaults use the local
 
 `usageGuard` is on by default: before each role and the verify command the runner reads the latest Codex session `rate_limits`, and at or above `threshold` percent it stops with `USAGE_LIMIT`, keeps the checkpoint and writes `HANDOFF.md` (`handoffPath`). Unknown or expired usage never blocks. Turn it off with `{"usageGuard": {"enabled": false}}`.
 
+### Codex progress and live monitor
+
+The runner prints a progress table to stderr whenever a role starts or ends, showing quota usage, model/effort, elapsed time, phase and task. Its final result on stdout stays JSON. Routing, workers, diagnosis, the verification command and the independent verifier are included; `node/—` identifies the verification command. Successful roles show `✓`, failed or interrupted roles show `✗`, and completed times stop advancing. A role's success means that role completed successfully; only the final `VERIFIED` result approves the task.
+
+For a table that refreshes every second, open another terminal in the task repository:
+
+```sh
+node /path/to/model-ladder/scripts/watch.mjs
+# Or select the task repository explicitly:
+node /path/to/model-ladder/scripts/watch.mjs --cwd /path/to/task-repo
+```
+
+```text
+▴ model-ladder ── 5h 15% · 7d 44%
+model/effort          time       task
+gpt-6-luna/low        ✓ 5s       route: Fix the greeting typo
+gpt-6.1-sol/medium    12s        worker: Fix the greeting typo
+[usage guard: on]  threshold 90%
+```
+
+The monitor truncates long tasks to the terminal width, counts Chinese characters as two cells, and removes completed rows ten seconds after completion. The header shows `idle` when no role is running. Ctrl-C stops the monitor without stopping the runner. Redirected output appends snapshots instead of using terminal redraw sequences.
+
+Configure the guard through monitor arguments (settings are saved before monitoring starts):
+
+```sh
+node /path/to/model-ladder/scripts/watch.mjs --guard off
+node /path/to/model-ladder/scripts/watch.mjs --guard on --threshold 90
+```
+
+`--threshold` accepts finite numbers from 1 through 100, including decimals; invalid arguments exit with an error before writing anything. Updates preserve other fields in `.codex/model-ladder.json`. A running ladder reloads the guard at the next role or verification-command boundary; it does not interrupt an already running role. The threshold is displayed only while the guard is enabled. Changing configuration can invalidate a saved resume checkpoint, which requires the original configuration.
+
+The runner atomically replaces `.model-ladder/live.json` at role start/end and during final cleanup, including handled cancellation and idle timeout. It contains `{ runId, updatedAt, agents: [{ phase, model, effort, task, startedAt, endedAt, pass }], usage: { fiveHour, sevenDay } }`; timestamps are ISO strings and active rows have `endedAt: null, pass: null`. The latest run replaces the previous table. The monitor reads this file and refreshes usage independently through the same `readCodexUsage` implementation as the runner.
+
+Usage is the latest locally recorded Codex session's quota percentage, not this ladder's token cost or a live account query. Only unexpired windows explicitly identified as 300 or 10080 minutes are labelled 5h or 7d; absent, expired or unidentifiable windows show `?`. The guard still checks the highest percentage across all unexpired windows. Hard termination such as SIGKILL or power loss cannot write final state and can leave an active row behind.
+
+This is terminal output. Whether Codex app expands running tool output is controlled by the app; the plugin does not install a persistent composer panel or clickable switch.
+
+Run `node tests/e2e/codex-live-smoke.mjs` for an offline runner/monitor demonstration with `tests/helpers/fake-codex.mjs`. It creates a disposable Git fixture, checks running and completed rows, waits for the ten-second removal, then cleans up; no authenticated model call is made. Add `--terminal` to visually inspect the monitor's redraw in your terminal instead of capturing and asserting its output.
+
 `verify` is an existing trusted project command, run by Node and judged by its exit status. Without it, Codex follows `.agents/skills/verify/SKILL.md` or `.claude/skills/verify/SKILL.md` when present; otherwise it discovers an existing npm, pytest, Cargo, Go, Maven or Make test command. If none exists, the user must supply explicit acceptance criteria before work begins. A separate model always checks the task and any supplied criteria after command checks pass. For editing tasks, this verifier can write build artifacts in the isolated worktree; source and verification inputs remain protected by checks after verification. Report verifiers remain read-only. The router never invents a shell command to execute.
 
 Codex starts every attempt from the same commit plus the user's approved dirty snapshot. Tests and both ladder configuration files stay protected, except tests may change for test-writing tasks. Protection compares actual Git trees before and after verification, including tests the user had already edited. User staging stays unchanged. Read-only reports run in isolated read-only worktrees and return their full report without applying anything.
@@ -409,4 +448,4 @@ The brief format and the "verifier on a fresh context" rule are adapted from [ps
 
 Released under the [MIT License](LICENSE). Copyright (c) 2026 neilyonglu.
 
-Built in collaboration with Claude Code and Codex. Found a problem? Please [open an issue](https://github.com/neilyonglu/model-ladder/issues).
+Found a problem? Please [open an issue](https://github.com/neilyonglu/model-ladder/issues).

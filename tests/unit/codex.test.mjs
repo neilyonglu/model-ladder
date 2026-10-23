@@ -226,6 +226,49 @@ test('timeout cancels the child and releases the run marker', async () => {
   assert.match(result.attempts[0].reason, /Timed out/)
   assert.ok(readdirSync(join(dir, '.model-ladder', result.runId)).some((file) => /^worker-.*events.jsonl$/.test(file)))
   assert.equal(existsSync(join(dir, '.model-ladder/run.json')), false)
+  const live = JSON.parse(read(dir, '.model-ladder/live.json'))
+  assert.equal(live.runId, result.runId)
+  assert.deepEqual(live.agents.map((a) => [a.phase, a.pass]), [['route', true], ['worker', false]])
+  assert.ok(live.agents.every((a) => a.endedAt && Date.parse(a.endedAt) >= Date.parse(a.startedAt)))
+  assert.ok(Date.parse(live.updatedAt) >= Date.parse(live.agents.at(-1).endedAt))
+})
+
+test('live state and snapshots describe every role at start/end, including verification command', async () => {
+  const dir = fixture({ delay: 50 })
+  const frames = [], states = []
+  const result = await run(dir, {}, { onProgress: (text) => {
+    if (!text.startsWith('▴')) return
+    frames.push(text)
+    states.push(JSON.parse(read(dir, '.model-ladder/live.json')))
+  } })
+  assert.equal(result.status, 'VERIFIED', JSON.stringify(result))
+  const final = JSON.parse(read(dir, '.model-ladder/live.json'))
+  assert.equal(final.runId, result.runId)
+  assert.deepEqual(final.usage, { fiveHour: null, sevenDay: null })
+  assert.deepEqual(final.agents.map((a) => a.phase), ['route', 'worker', 'verify-command', 'verify'])
+  for (const [index, agent] of final.agents.entries()) {
+    assert.ok(agent.model && agent.effort && agent.task)
+    assert.equal(agent.pass, true)
+    assert.ok(Date.parse(agent.endedAt) >= Date.parse(agent.startedAt))
+    assert.ok(states.some((s) => s.agents[index]?.endedAt === null && s.agents[index]?.pass === null))
+    assert.ok(states.some((s) => s.agents[index]?.endedAt === agent.endedAt))
+  }
+  assert.match(frames.at(-1), /idle/)
+  assert.match(frames.join('\n'), /worker: Fix greeting typo/)
+  assert.equal(readdirSync(join(dir, '.model-ladder')).some((f) => f.endsWith('.tmp')), false)
+})
+
+test('cancellation closes the active live row and writes a final snapshot', async () => {
+  const dir = fixture({ delay: 5000 })
+  const controller = new AbortController()
+  const result = await run(dir, {}, { signal: controller.signal, onProgress: (text) => {
+    if (text.startsWith('worker cheap/low: START')) controller.abort()
+  } })
+  assert.equal(result.errorCode, 'CANCELLED')
+  const live = JSON.parse(read(dir, '.model-ladder/live.json'))
+  assert.equal(live.agents.at(-1).phase, 'worker')
+  assert.equal(live.agents.at(-1).pass, false)
+  assert.ok(live.agents.every((a) => a.endedAt))
 })
 
 test('interrupted drafts resume in a new worktree only against the original task and checkout', async () => {
