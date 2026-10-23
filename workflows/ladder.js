@@ -174,7 +174,7 @@ Also return:
 - smallReason: one sentence on why.
 - readOnly: true when the task only reads and reports (a review, an analysis, a question) and edits no file. Otherwise false.`
   const { result: r, error, tokens } = await measured(prompt, {
-    label: 'route', phase: 'Route', schema: ROUTE_SCHEMA, agentType: 'model-ladder:router', ...config.router,
+    label: `route ${label(config.router)}`, phase: 'Route', schema: ROUTE_SCHEMA, agentType: 'model-ladder:router', ...config.router,
   })
   if (!r) throw new Error(`model-ladder: the router ${error}`)
   const lowest = { model: config.tiers[0].model, effort: config.tiers[0].efforts[0] }
@@ -330,7 +330,7 @@ async function run(plan) {
     else if (!work.filesChanged.length && plan.verify) verdict = { pass: false, reason: 'worker changed nothing', output: '' }
     else {
       const verifier = await measured(verifyPrompt(plan, work), {
-        label: 'verify', phase: `Attempt ${n}`, schema: verdictSchema(), agentType: 'model-ladder:verifier', ...verifierCell,
+        label: `verify ${label(verifierCell)}`, phase: `Attempt ${n}`, schema: verdictSchema(), agentType: 'model-ladder:verifier', ...verifierCell,
       })
       verifyTokens = verifier.tokens
       verdict = verifier.result ?? { pass: false, reason: `verifier ${verifier.error}`, output: '' }
@@ -355,7 +355,7 @@ async function run(plan) {
     if (n === config.maxAttempts || !moves.length) break
 
     const diag = await measured(diagnosePrompt(history, moves), {
-      label: 'diagnose', phase: `Attempt ${n}`, schema: DIAGNOSIS_SCHEMA, agentType: 'model-ladder:router', ...config.router,
+      label: `diagnose ${label(config.router)}`, phase: `Attempt ${n}`, schema: DIAGNOSIS_SCHEMA, agentType: 'model-ladder:router', ...config.router,
     })
     tokens += diag.tokens
     attempt.tokens += diag.tokens
@@ -384,7 +384,7 @@ LAST OUTPUT
 ${history[history.length - 1].verdict.output}
 
 Explain to the user why it failed (reason) and what they can do next (suggestion): clarify the task, fix the environment, raise the ladder's top, or do it by hand.`,
-    { label: 'final diagnosis', phase: 'Final diagnosis', schema: FINAL_SCHEMA, agentType: 'model-ladder:router', ...args.config.router },
+    { label: `final diagnosis ${label(args.config.router)}`, phase: 'Final diagnosis', schema: FINAL_SCHEMA, agentType: 'model-ladder:router', ...args.config.router },
   )
   tokens += final.tokens
   return done('FAILED', null, final.result)

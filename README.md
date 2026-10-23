@@ -320,6 +320,24 @@ Models are aliases (`haiku`, `sonnet`, `opus`), so new model versions are picked
 
 Every run appends a line to `.model-ladder/history.jsonl`: which cells were tried, why each move was made, and the tokens spent. Use it to tune the grid, for example to start at haiku/medium if haiku/low keeps failing.
 
+### Claude Code band
+
+While Claude Code is open, a band above the prompt shows the ladder live:
+
+```
+▴ model-ladder ── 5h 15% · 7d 44%
+model/effort        time     task
+haiku-5.5/low       ✓ 5s     Summarize the README install steps
+sonnet-5.5/medium   12s      Collect the escalation rules…
+[usage guard: on]  threshold [90] % [set]
+```
+
+- The header shows the subscription usage (5-hour and weekly) and `idle` when no ladder agent runs. `▴`/`▾` folds it to one line.
+- Each running agent gets one row with its model/effort, time so far and task. A finished row shows `✓` for 10 seconds, then leaves. An agent still running after 10 minutes raises one notice; nothing stops it.
+- `usage guard` turns the usage guard on or off, and `threshold` (shown while it is on) takes a number from 1 to 100. Both write `.claude/model-ladder.json` and apply from the next run.
+
+The band needs a Claude Code version with plugin modules (2.1.290 or later). It shows in the terminal, the desktop app and the VS Code extension. It lives in its own hooks file, so an older version that cannot load it still runs the ladder.
+
 ## 🛡️ Safety
 
 - Workers run in throwaway git worktrees. Only a verified change reaches your working tree, and it is never committed unless `commit` is true. Nothing is ever pushed.

@@ -2,6 +2,18 @@
 
 All notable changes to model-ladder. Versions follow [semantic versioning](https://semver.org); Claude Code only offers an update when `version` in `.claude-plugin/plugin.json` changes.
 
+## [1.4.0] - 2026-10-23
+
+### Added
+
+- Claude Code band above the prompt: subscription usage, each running ladder agent's model/effort, time and task (a finished row shows `✓` for 10 seconds), and usage guard and threshold controls that write `.claude/model-ladder.json`.
+
+### Changed
+
+- The route, verify and diagnose agent labels now carry their model and effort, like the worker's.
+- The repository ignores `.model-ladder/` and `.claude/worktrees/`.
+- Ladder agents (router, worker, test-writer, verifier) no longer stop at a fixed number of turns; an agent runs as long as it keeps working. The band shows how long each one has run and notifies once when one passes 10 minutes.
+
 ## [1.3.0] - 2026-10-23
 
 ### Added

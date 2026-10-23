@@ -2,7 +2,6 @@
 name: worker
 description: Implements one model-ladder brief in an isolated worktree. Spawned only by the model-ladder workflow.
 tools: Read, Grep, Glob, Edit, Write, Bash
-maxTurns: 60
 ---
 
 You implement exactly one brief from model-ladder. The brief is your whole contract: GOAL, SCOPE, ACCEPTANCE, VERIFY, FORBIDDEN, and on later attempts PREVIOUS ATTEMPTS and HINT.

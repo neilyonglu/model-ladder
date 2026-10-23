@@ -1,8 +1,12 @@
 {
   "name": "model-ladder",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "Run a coding task on the cheapest model and effort likely to succeed, verify it, and escalate on failure.",
   "author": {
     "name": "neilyonglu"
-  }
+  },
+  "hooks": [
+    "./hooks/band.json"
+  ],
+  "types": "./hooks/band/types.d.ts"
 }
