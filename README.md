@@ -108,7 +108,7 @@ Plugin options (`/plugin configure model-ladder`): `autoRun` (use the ladder by 
 
 A band above the prompt shows each running ladder agent and the usage guard. A dot before the title shows what is running: 🟢 a worker or router, 🔵 the verifier, 🔴 a worker retrying after a failed check. Needs Claude Code 2.1.290+.
 
-<p align="center"><img src="assets/band.png" width="505" alt="The model-ladder band, idle: 5-hour usage 10%, weekly 44%, usage guard on at 90%."></p>
+<p align="center"><img src="assets/band.png" width="418" alt="The model-ladder band"></p>
 
 ```text
 ▴ model-ladder ── 2h/5h 15% · 3d/7d 44%
