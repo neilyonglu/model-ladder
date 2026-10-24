@@ -229,10 +229,14 @@ function brief(plan, history, hint) {
   if (plan.readOnly) {
     sections.push('READ-ONLY\n  You run in the user\'s own checkout, not a worktree. Do not create, modify or delete any file, and run no git command that changes state. Your summary is the deliverable: put the full report in it.')
   } else {
-    sections.push(`FORBIDDEN\n  Do not create, modify or delete files matching: ${plan.protected.join(', ') || '(none)'}\n  Do not commit. Do not touch files outside this worktree.`)
+    sections.push(`FORBIDDEN\n  Do not create, modify or delete files matching: ${plan.protected.join(', ') || '(none)'}\n  Do not commit. Do not stage files (no \`git add\`). Do not touch files outside this worktree.`)
     // The worktree is created from the remote default branch, not from the user's branch.
     const setup = [`git reset -q --hard ${args.baseCommit}`]
-    if (args.setupPatch) setup.push(`git apply --whitespace=nowarn "${args.setupPatch}"`)
+    if (args.setupPatch) {
+      setup.push(`git apply --whitespace=nowarn "${args.setupPatch}"`)
+      // Staged, so the verifier's plain `git diff` shows only the worker's own changes.
+      setup.push('git add -A')
+    }
     sections.push(`SETUP (do this first, in order)\n${setup.map((s) => `  ${s}`).join('\n')}\n  This moves the worktree to the user's current commit` +
       (args.setupPatch ? ' and applies their uncommitted changes; build on them.' : '.'))
   }
@@ -253,10 +257,10 @@ function verifyPrompt(plan, work) {
   return `You verify one model-ladder attempt. Work only inside ${work.worktreePath}. Do not edit any file.
 
 0. Run \`git -C "${work.worktreePath}" rev-parse HEAD\`. If it is not ${args.baseCommit}, fail with reason "wrong base".
-1. ${args.setupPatch ? 'Confirm the setup patch is applied (the user\'s changes are present in the files it touches). If not, fail with reason "setup patch not applied".' : 'Skip.'}
+1. ${args.setupPatch ? 'Confirm the setup patch is applied (the user\'s changes are present in the files it touches). If not, fail with reason "setup patch not applied". The user\'s starting changes are staged; the worker\'s changes are `git diff` (unstaged) plus untracked files, the `??` lines of step 2. Judge only those.' : 'Skip.'}
 2. Run \`git -C "${work.worktreePath}" status --porcelain --untracked-files=all\`. If any changed or new file matches one of these globs, fail with reason "modified protected file <path>": ${plan.protected.join(', ') || '(none)'}${setup}
    Ignore build artifacts that running code rewrites: ${ARTIFACTS.join(', ')}
-3. ${plan.verify ? `Run the verify step from the worktree root: ${plan.verify}\n   Pass only if it succeeds.` : 'There is no verify command. Judge each ACCEPTANCE item against the diff (`git diff` plus new files). If the attempt changed no files, the task is read-only and the worker report below is the deliverable: judge it instead, and spot-check its claims against the sources it cites. Be strict: pass only if every item is clearly met.'}
+3. ${plan.verify ? `Run the verify step from the worktree root: ${plan.verify}\n   Pass only if it succeeds.` : 'There is no verify command. Judge each ACCEPTANCE item against the worker\'s changes (`git diff` plus new files). If the attempt changed no files, the task is read-only and the worker report below is the deliverable: judge it instead, and spot-check its claims against the sources it cites. Be strict: pass only if every item is clearly met.'}
 
 ACCEPTANCE
 ${bullets(plan.acceptance)}

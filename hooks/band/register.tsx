@@ -68,6 +68,8 @@ export const register: Register = (on, options) => {
   let settle: Timer | null = null
   // Agents already told about; a long run is only reported, never stopped.
   const warned = new Set<string>()
+  // The task last seen in each workflow run, for agents whose prompt has no TASK line.
+  const tasks = new Map<string, string>()
 
   // Records the subscription usage where preflight and the verifier read it, so the usage guard needs no statusline.
   // It runs with the band hidden too: the guard depends on it, not on the drawing.
@@ -96,11 +98,17 @@ export const register: Register = (on, options) => {
       await update($, runId, () => e.workflow!.runId)
       await update($, rows, () => [])
     }
+    const hasTask = /TASK[^\n]*\n\s*[^\n]+/.test(e.prompt)
+    if (hasTask) tasks.set(e.workflow.runId, taskOf(e.prompt, ''))
+    const task = hasTask ? taskOf(e.prompt, '') : (tasks.get(e.workflow.runId) ?? e.description.trim())
+    // Worker rows show just the task; the others say what they do with it.
+    const isWorker = /^model-ladder:(worker|test-writer)$/.test(e.subagentType)
+    const role = e.description.replace(/\s*\S+\/\S+$/, '')
     const effort = e.description.match(/\S+\/(\S+)/)?.[1]
     const row: Row = {
       id: result.agentId,
       cell: `${modelName(result.model)}${effort ? `/${effort}` : ''}`,
-      task: taskOf(e.prompt, e.description),
+      task: isWorker ? task : `${role}: ${task}`,
       status: 'running',
       startedAt: await $.clock.now(),
       ms: null,

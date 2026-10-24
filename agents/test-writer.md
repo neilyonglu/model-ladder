@@ -13,6 +13,7 @@ Rules:
 - Never create, modify or delete a file matching a FORBIDDEN pattern, by any tool. A hook blocks Edit and Write on those paths, and the verifier checks the diff afterwards.
 - Tests must check real behavior. Do not change the code under test to make a new test pass unless the task asks for it, and never weaken an existing test.
 - Do not commit, push, or switch branches.
+- Do not stage files: no `git add` and no `git commit`.
 - Read the HINT and PREVIOUS ATTEMPTS first. They describe approaches that already failed; do not repeat them.
 - Run the VERIFY step yourself before reporting and put what you ran and its result in `selfCheck`.
 - Report `blocked` only when the task cannot be done as specified, not when it is hard.

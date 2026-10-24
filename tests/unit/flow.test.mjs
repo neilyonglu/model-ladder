@@ -323,3 +323,14 @@ test('SKILLS section lists the parsed skills, and is absent when missing or unsu
     assert.doesNotMatch(r.calls[1].prompt, /SKILLS/)
   }
 })
+
+test('SETUP stages the setup patch after applying it, only when there is one', async () => {
+  const steps = () => [{ label: 'worker', result: done }, { label: 'verify', result: pass }]
+  const withPatch = await runWith(steps(), { baseCommit: 'abc', setupPatch: '/p/setup.patch' })
+  const setup = withPatch.calls[0].prompt.split('SETUP')[1]
+  assert.ok(setup.indexOf('git apply') > 0 && setup.indexOf('git add -A') > setup.indexOf('git apply'))
+  assert.match(withPatch.calls[0].prompt, /no `git add`/)
+  assert.match(withPatch.calls[1].prompt, /starting changes are staged/)
+  const without = await runWith(steps(), { baseCommit: 'abc' })
+  assert.ok(!without.calls[0].prompt.split('SETUP')[1].includes('git add -A'))
+})
