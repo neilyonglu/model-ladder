@@ -1,359 +1,178 @@
 # model-ladder — Design
 
-A plugin for Claude Code and Codex that runs a coding task on the cheapest model and effort likely to succeed, verifies the result, and escalates on failure. A router model picks the starting point and diagnoses each failure; code enforces the escalation rules.
-
-Status: v1.6.0 supports both runtimes, default-on session guidance and usage guards, the Claude Code band, and the Codex terminal monitor. The Claude end-to-end scenarios, benchmark, and initial 91-test validation below are historical results. Native Codex write validation subsequently passed with the production router and verifier. See [Codex automation follow-up](README.md#codex-automation-follow-up-on-2026-10-23).
+Maintainer notes. User docs are in [README.md](README.md). A router model picks the start and diagnoses failures; code enforces the escalation rules. v1.6.0 supports Claude Code and Codex.
 
 ## Goals
 
-- Spend less per verified task than running everything on a strong model at high effort.
-- Never report a task as done without a verification signal.
-- Never leave the user's branch half-finished or touch their uncommitted work.
-- Install with two commands; no proxy, no API keys, works on a Claude subscription.
+Cheaper per verified task than a strong model at high effort; never report done without verification; never touch uncommitted work; two-command install, no proxy or API key. Non-goals: Gemini, best-of-N, dollar cost.
 
-Non-goals: Gemini, parallel attempts (best-of-N), cost in dollars.
-
-## Repository layout
+## Layout
 
 ```text
-model-ladder/
-├── .claude-plugin/           # Claude manifest, marketplace and plugin options
-├── .codex-plugin/            # Codex manifest, same identity and version
-├── .agents/plugins/          # Codex marketplace metadata
-├── skills/run/SKILL.md       # Claude entry: preflight, workflow, finish
-├── codex-skills/model-ladder/SKILL.md  # Codex entry: packaged Node runner
-├── workflows/ladder.js       # Claude orchestration and canonical pure rules
-├── agents/                  # Claude router, worker, test-writer and verifier
-├── scripts/
-│   ├── preflight.mjs         # Claude config, dirty snapshot, marker, workflow args
-│   ├── finish.mjs            # Claude apply, optional commit, cleanup and report
-│   ├── common.mjs            # shared Claude script helpers
-│   ├── codex-run.mjs         # Codex routing, attempts, verification and resume
-│   ├── codex-exec.mjs        # native Codex process, schemas, logs and idle timeout
-│   ├── codex-worktree.mjs    # isolated snapshots, protection and incremental patches
-│   ├── codex-usage.mjs       # local Codex session quota reading
-│   ├── codex-live.mjs        # atomic live state and terminal rendering
-│   ├── watch.mjs             # Codex monitor and guard configuration
-│   ├── usage-statusline.mjs  # Claude usage fallback and guard reader
-│   ├── sync-rules.mjs        # generates ladder-rules.mjs from the workflow
-│   └── update-check.mjs      # cached Claude release notification
-├── hooks/
-│   ├── hooks.json            # Claude protection and SessionStart hooks
-│   ├── codex-hooks.json      # Codex SessionStart hook
-│   ├── autorun.mjs           # default-on guidance; excludes docs/settings/git
-│   ├── guard.mjs             # Claude protected-path hook
-│   ├── band.json             # separate Claude band registration
-│   └── band/                 # Claude UI, timers, controls and usage recording
-└── tests/
-    ├── unit/                 # offline Node tests with real Git fixtures
-    ├── helpers/              # fake native Codex process
-    ├── fixture-repo/         # uv project used by Claude scenarios
-    └── e2e/                  # Claude scenarios/benchmark, Codex smoke tests
+.claude-plugin/ .codex-plugin/ .agents/plugins/   manifests (same name and version), marketplace
+skills/run/SKILL.md            Claude entry: preflight, workflow, finish
+codex-skills/model-ladder/     Codex entry: packaged Node runner
+workflows/ladder.js            Claude orchestration + canonical pure rules
+agents/                        router, worker, test-writer, verifier
+scripts/  preflight.mjs finish.mjs common.mjs            Claude config, snapshot, apply, report
+          codex-run.mjs codex-exec.mjs codex-worktree.mjs codex-usage.mjs codex-live.mjs watch.mjs
+          usage-statusline.mjs sync-rules.mjs update-check.mjs
+hooks/    hooks.json codex-hooks.json autorun.mjs guard.mjs band.json band/
+tests/    unit/ helpers/ fixture-repo/ e2e/
 ```
+
+`workflows/ladder.js` pure block is canonical; `scripts/sync-rules.mjs` generates `scripts/ladder-rules.mjs` for Node imports and a unit test rejects drift.
 
 ## Roles (Claude Code)
 
 | Role | Model / effort | Tools | Job |
 |---|---|---|---|
-| Skill (main session) | sonnet / medium (skill frontmatter) | all | Run the two scripts and the workflow; ask the user when a script or the workflow needs a decision |
-| Router | `router`, default sonnet / low | Read, Grep, Glob | Pick the start cell; diagnose each failure; explain a final failure |
-| Worker / test-writer | the current ladder cell | Read, Grep, Glob, Edit, Write, Bash | Implement the brief in a fresh worktree |
-| Verifier | `verifier` (haiku / low) with a verify command, else `router` | Read, Grep, Glob, Bash | Check protected paths, run verify or judge acceptance |
+| Skill (main session) | sonnet / medium | all | Run the two scripts and the workflow; ask the user |
+| Router | `router` (sonnet/low) | Read, Grep, Glob | Start cell, diagnoses, final explanation |
+| Worker / test-writer | current cell | Read, Grep, Glob, Edit, Write, Bash | Implement the brief in a fresh worktree |
+| Verifier | `verifier` (haiku/low) with a verify command, else router | Read, Grep, Glob, Bash | Protected check, verify or judge acceptance |
 
-The orchestrating session is pinned to sonnet/medium: its steps are mechanical, while every judgment call sits with the router. It is not pinned lower because it runs `git apply` and worktree removal on the user's repository.
+Running a command needs no judgment (cheap verifier); judging criteria does (router's model). The skill is pinned to sonnet/medium because it runs `git apply` and worktree removal.
 
-Running a verify command needs no judgment, so a cheap verifier does it. Judging acceptance criteria without a command does, so that falls back to the router's model.
+## Config
 
-## Configuration (Claude Code)
+Keys, defaults and meanings: [README Configure](README.md#configure); source of truth is `DEFAULTS` in `scripts/preflight.mjs`. Top-level keys replace defaults except `usageGuard`, which merges per field. `preflight.mjs` validates and stops naming each problem. Codex uses `.codex/model-ladder.json` with its own defaults (`scripts/codex-run.mjs`).
 
-Project only: `.claude/model-ladder.json`. Codex uses a separate `.codex/model-ladder.json`, described below. Each top-level key replaces its default except `usageGuard`, whose fields merge with defaults.
-
-```json
-{
-  "router":   { "model": "sonnet", "effort": "low" },
-  "verifier": { "model": "haiku",  "effort": "low" },
-  "tiers": [
-    { "model": "haiku",  "efforts": ["low", "medium", "high"],          "maxEffortJump": 2 },
-    { "model": "sonnet", "efforts": ["low", "medium", "high"],          "maxEffortJump": 2 },
-    { "model": "opus",   "efforts": ["low", "medium", "high", "xhigh"], "maxEffortJump": 1 }
-  ],
-  "maxAttempts": 4,
-  "verify": null,
-  "protected": [],
-  "commit": false,
-  "keepFailed": false,
-  "usageGuard": { "enabled": true, "threshold": 90 }
-}
-```
-
-- Models are aliases, not IDs, so new model versions are picked up without a release.
-- `tiers` is ordered weakest to strongest.
-- `verify`: shell command that proves the task is done.
-- `protected`: extra globs no worker may modify, on top of the built-in ones.
-- `commit`: commit the applied diff on the user's branch.
-- `keepFailed`: keep worktrees of failed attempts for debugging.
-- `usageGuard`: stop at the configured percentage (1–100); unknown usage does not block. Partial settings keep the other field's default.
-
-`preflight.mjs` validates the merged config and stops with a message naming each problem.
-
-## The grid and legal moves
-
-The ladder is a grid of cells `(tier, effort)`. A move is legal when it goes up:
+## Grid and legal moves
 
 | Move | Rule |
 |---|---|
-| Same tier, higher effort | Up to `maxEffortJump` effort steps |
-| Next tier | Only `tier + 1`; any effort in that tier |
-| Down, sideways, or skipping a tier | Never |
+| Same tier, higher effort | Up to `maxEffortJump` steps |
+| Next tier | Only `tier + 1`, any effort (may be lower: sonnet/high -> opus/low) |
+| Down, sideways, skipping a tier | Never |
 
-Changing tier may land on a lower effort (sonnet/high → opus/low). A tier change usually means a knowledge or capability gap, which a stronger model often fixes at low effort.
-
-`legalMoves(cell, tiers)` is a pure function. The workflow computes the legal list and hands it to the router, so the router answers a multiple-choice question instead of applying rules from memory. An illegal or malformed answer falls back to the default move: next effort in the same tier, else the lowest effort of the next tier.
+`legalMoves(cell, tiers)` is pure. The workflow hands the router the legal list (multiple choice, not rules from memory). Illegal or malformed answer -> default move: next effort in the tier, else lowest effort of the next tier.
 
 ## Flow (Claude Code)
 
 ```text
-Skill (main session)
-  1. node scripts/preflight.mjs     → READY + workflowArgs, or a status that needs the user
-  2. Workflow model-ladder:ladder   → route, then attempts → VERIFIED | FAILED | STOPPED
-                                       (or NEEDS_INPUT: ask, call again;
-                                        or DIRECT: the skill does the task itself after finish)
-  3. node scripts/finish.mjs        → apply, cleanup, history, report text
+1. node scripts/preflight.mjs     -> READY + workflowArgs, or a status needing the user
+2. Workflow model-ladder:ladder   -> VERIFIED | FAILED | STOPPED | NEEDS_INPUT | DIRECT
+3. node scripts/finish.mjs        -> apply, cleanup, history, report
 ```
 
-Everything deterministic lives in the scripts, so the main session makes about five model calls per run whatever the task. Workflow scripts cannot touch the filesystem, which is why file work sits outside the workflow.
+Deterministic work lives in scripts (about five model calls per main session); workflows cannot touch the filesystem.
 
-### Ladder or direct (provisional)
-
-The orchestration runs in the calling session, so each of its model calls re-reads that session's whole context. Its cost is not fixed: it grows with the caller's context. In a long session (2026-10-20, a forge session past 400k tokens) one orchestration turn can cost more than a whole worker attempt, and a small task leaves little for a cheaper worker to save.
-
-So the workflow skips the ladder, returning `DIRECT`, when both hold:
-
-| | Small context | Large context (above ~300k tokens) |
-|---|---|---|
-| Small task (one or two files, design given) | ladder | direct |
-| Larger task | ladder | ladder |
-
-Only the calling session knows its context size, so the skill estimates it and passes it as `contextTokens`. The router reads the code and returns `small`. The threshold itself is code (`LARGE_CONTEXT` in `workflows/ladder.js`): a first version let the router weigh `contextTokens`, and in a real run sonnet/low called a prompt that said "about 500000 tokens" an unknown context size. On `DIRECT` the workflow stops before any worker, finish disarms the guard and records the run, and the skill then does the task itself. `--ladder` at the start of the task passes `forceLadder`, which overrides the verdict. A direct case still costs one router call. The thresholds are a starting guess, not a measurement.
-
-0.1.4 made this check in the skill before preflight; 0.1.5 moved the task half into the router, which reads the code instead of guessing from the task text.
-
-To calibrate later:
-
-1. Record the main session's orchestration cost in `history.jsonl`; today it holds only route and attempt output tokens.
-2. Run the same tasks through the ladder from a fresh session and from a long one, and directly with sonnet/high and opus.
-3. Group tasks by size (files changed, output tokens) and find where the ladder and direct lines cross for each context size.
-
-### 1. Preflight
-
-Returns the first thing the user must decide as a status; the skill asks and reruns with the granted flag.
-
+### Preflight
 | Status | Meaning | Flag on yes |
 |---|---|---|
 | `ERROR` | Not a git repo with a commit, or invalid config | — |
-| `STALE_RUN` | A run marker exists: another run is active or one crashed | `--clear-stale` |
-| `OVERRIDDEN` | `CLAUDE_CODE_EFFORT_LEVEL` or `CLAUDE_CODE_SUBAGENT_MODEL_FORCE` is set; either overrides every attempt's cell | `--ignore-env` |
-| `DIRTY` | Uncommitted changes, listed | `--allow-dirty` |
-| `USAGE_LIMIT` | Recorded subscription usage meets the threshold; no new run marker is written | Wait for quota reset |
-| `READY` | `workflowArgs`: config, protection, `hasVerifySkill`, setup patch and files | — |
+| `STALE_RUN` | Run marker exists (active or crashed) | `--clear-stale` |
+| `OVERRIDDEN` | `CLAUDE_CODE_EFFORT_LEVEL` / `CLAUDE_CODE_SUBAGENT_MODEL_FORCE` set | `--ignore-env` |
+| `DIRTY` | Uncommitted changes | `--allow-dirty` |
+| `USAGE_LIMIT` | Recorded usage >= threshold; no marker written | wait for reset |
+| `READY` | `workflowArgs`: config, protection, `hasVerifySkill`, setup patch/files | — |
 
-On a dirty run, preflight snapshots the changes through a temporary index (`GIT_INDEX_FILE`) so the user's real index is untouched:
+Dirty runs snapshot through a temporary index (`GIT_INDEX_FILE`), leaving the real index untouched: `baseTree` (HEAD + changes, untracked included), `setup.patch` (`git diff --cached --binary HEAD`, applied first by the worker), `setupFiles` (exempt from the protected check). Clean tree: `baseTree` = `HEAD^{tree}`. Run files live in `<repo>/.model-ladder/` (`run.json` marker, `state.json`, `setup.patch`, `result.patch`, `history.jsonl`, `usage.json`, `HANDOFF.md`), not under `.git` or `.claude`, where headless runs could not delete or edit them.
 
-- `baseTree`: `git write-tree` of HEAD plus the uncommitted changes, untracked files included.
-- `setup.patch`: `git diff --cached --binary HEAD`, which the worker applies first.
-- `setupFiles`: the files in that patch. The verifier exempts them from the protected check, so the user's own test edits do not fail an attempt.
+### Ladder or direct
+Orchestration re-reads the caller's context, so in long sessions it can cost more than a cheap worker saves. The workflow returns `DIRECT` when the task is small (router's `small`: one or two files, design given) and context is large (`contextTokens` from the skill, threshold `LARGE_CONTEXT` ~300k in `workflows/ladder.js`). The threshold is code, not router judgment (sonnet/low misread "about 500000 tokens"). `--ladder` sets `forceLadder`. A direct case still costs one router call; thresholds are a guess, not measured.
 
-On a clean tree `baseTree` is `HEAD^{tree}`. Preflight also records the existing worktrees and writes the run marker.
-
-All run files live in `<repo root>/.model-ladder/`: `run.json` (the marker), `state.json`, `setup.patch`, `result.patch`, `history.jsonl`. Not under `.git` or `.claude`: Claude Code asks permission to delete files under `.git` and to edit or delete files under `.claude`, which in headless runs left stale markers and dropped history lines.
-
-### 2. Workflow
-
-One call routes and runs. It returns early with `NEEDS_INPUT` only when the user must answer first; the skill then calls again, with the plan (criteria filled in) or with a clarified task.
-
-**Route.** The router reads the task and the repo and returns the start cell with a reason, a one-sentence goal, the expected scope, the verify step, acceptance criteria, `allowTests` with a reason, and an optional question.
-
-Verify source, first match wins:
-
-1. `verify` in the config file.
-2. A project verify skill at `.claude/skills/verify/` (for example one generated by pstack's create-verification-skill).
-3. An existing test suite the router finds in the repo. The router may not write a check of its own, not even a one-line assert: that would let it, not the user, define done.
-4. None: `needsAcceptance`. The user confirms the router's proposed criteria or gives their own.
-
-`question` is set when the task is too vague to act on. Without it, a vague task such as "make the shop better" would pass: the worker changes something and the existing tests stay green.
-
-**Attempts.**
+### Workflow
+Route: the router returns start cell + reason, goal, scope, verify step, acceptance criteria, `allowTests` + reason, optional `question` (set when the task is too vague; else "make the shop better" passes on green tests). Verify source, first match wins: config `verify`; project verify skill `.claude/skills/verify/`; an existing test suite (the router may never write its own check, even a one-line assert); else `needsAcceptance` (user confirms criteria). `NEEDS_INPUT` returns early; the skill asks and calls again.
 
 ```text
 cell = start; history = []
 for attempt in 1..maxAttempts:
-    w = worker(brief(cell, history, hint))         # cell's model/effort, isolation: worktree
-    v = verifier(w.worktreePath)                   # skipped when w died, blocked or changed nothing
+    w = worker(brief(cell, history, hint))      # isolation: worktree
+    v = verifier(w.worktreePath)                # skipped if w died, blocked or changed nothing
     history.push({cell, w, v, tokens})
     if v.pass: return VERIFIED
-    if attempt == maxAttempts or legalMoves(cell) is empty: break
+    if attempt == maxAttempts or no legal moves: break
     d = router.diagnose(history, legalMoves(cell))
     if d.action starts with "stop_": return STOPPED
-    cell = d.choice if legal else defaultMove(cell)
-    hint = d.hint
-final = router.explain(history)                    # why it failed, what the user can do
-return FAILED
+    cell = d.choice if legal else defaultMove(cell); hint = d.hint
+final = router.explain(history); return FAILED
 ```
 
-- Each attempt starts from a clean worktree at the base commit. A weak model's broken patch tends to mislead the next one, so failures carry forward as summaries and hints, not as code.
-- `agent()` returns null when an agent dies and throws when it cannot produce valid structured output. Both count as a failed step: a failed worker is a failed attempt, a failed diagnosis takes the default move. Only a failed route stops the run.
-- The router sees the latest attempt in full (verify output trimmed to the last 200 lines) and earlier attempts as summaries.
-- Worst case: 1 route + 4 × (worker, verifier, diagnose) + 1 final explanation = 14 agent calls.
-- The workflow returns a compact result (no verify output, no hints) because the main session copies it into the finish script.
+- Each attempt starts from a clean worktree at the base; failures carry forward as summaries and hints, not code.
+- `agent()` returns null on death and throws on invalid structured output; both are failed steps (failed worker = failed attempt, failed diagnosis = default move). Only a failed route stops the run.
+- Router sees the latest attempt in full (verify output last 200 lines), earlier ones as summaries. Worst case 14 agent calls. The result is compact because the main session copies it into finish.
 
-| Diagnosis | Meaning | Workflow |
+| Diagnosis | Meaning | Move |
 |---|---|---|
-| `raise_effort` | Right direction, not deep enough | Higher effort in the same tier |
-| `raise_model` | Knowledge or capability gap, including invalid output | Next tier |
-| `stop_environment` | Missing dependency, broken test setup, unreachable service | Stop; a stronger model will not help |
-| `stop_unclear` | The task is ambiguous; the worker is guessing | Stop |
+| `raise_effort` | Right direction, not deep enough | Higher effort, same tier |
+| `raise_model` | Knowledge/capability gap, incl. invalid output | Next tier |
+| `stop_environment` | Missing dependency, broken setup, unreachable service | Stop |
+| `stop_unclear` | Ambiguous task | Stop |
 
-### 3. Finish
+`status: "blocked"` (worker judged the task impossible) counts as a failure and goes to diagnosis.
 
-Reads the workflow result (or an abort reason, or the workflow's error) on stdin. Always:
+### Finish
+Reads the workflow result (or abort reason / error) on stdin. Always:
 
-- On VERIFIED, stage everything in the winning worktree, `git write-tree` it, and apply `git diff --binary baseTree resultTree` to the user's working tree. Diffing against `baseTree` instead of HEAD keeps the user's own uncommitted changes out of the patch. Both trees live in the shared object store.
-- If `commit` is true, commit only the patch's files as `model-ladder: <goal>`.
-- If the patch does not apply (the user edited the same files during the run), keep the winning worktree and `result.patch` and say where they are.
-- Remove the worktrees and `worktree-wf_*` branches the run created, except failed ones when `keepFailed` is true.
-- Delete the run marker, state and setup patch, so an abort or crash never leaves the guard armed.
-- Append a history line and print the report.
+- VERIFIED: stage the winning worktree, `git write-tree`, apply `git diff --binary baseTree resultTree` to the working tree (diffing against `baseTree` keeps the user's own changes out).
+- `commit` true: commit only the patch's files as `model-ladder: <goal>`.
+- Patch conflicts (user edited the same files): keep the worktree and `result.patch`, report where.
+- Remove the run's worktrees and `worktree-wf_*` branches (failed ones kept when `keepFailed`); delete marker, state and setup patch (a crash never leaves the guard armed); append history; print the report.
 
-## Briefs and agents (Claude Code)
+## Brief
+Fields: GOAL, TASK, SCOPE, ACCEPTANCE (user, else router), VERIFY (config / verify skill / router), FORBIDDEN (preflight + `allowTests`), SETUP (dirty only), PREVIOUS and HINT (attempt 2+), REPORT `worktreePath`. Test-writing tasks run on `test-writer`, others on `worker`; they differ only in test protection, so the hook can tell by `agent_type` and the marker is written once, before the router decides `allowTests`.
 
-Brief:
-
-```text
-GOAL         one sentence                              router
-TASK         as the user wrote it                      user
-SCOPE        files expected to change                  router
-ACCEPTANCE   one checkable criterion per line          user, else router
-VERIFY       command, or "check ACCEPTANCE"            config / verify skill / router
-FORBIDDEN    protected globs, no commits               preflight + router (allowTests)
-SETUP        git apply <patch>  (dirty runs only)      preflight
-PREVIOUS     one line per failed attempt               workflow (attempt 2+)
-HINT         latest diagnosis                          router (attempt 2+)
-REPORT       worktreePath via git rev-parse            plugin
-```
-
-The brief format is adapted from pstack's orchestrate playbook (MIT).
-
-A task whose point is writing tests runs on `test-writer`, every other task on `worker`. The two differ only in whether test files are protected. Splitting them lets the hook tell the cases apart by `agent_type`, so the run marker can be written once, before the router has decided `allowTests`.
-
-`status: "blocked"` means the worker judged the task impossible as specified. It counts as a failure and goes to diagnosis.
-
-## Protected paths (Claude Code)
+## Protected paths
 
 ```text
-tests (worker only)   **/test_*.py  **/*_test.py  **/tests/**  **/__tests__/**
-                      **/*.test.*   **/*.spec.*   **/src/test/**
-always                .claude/model-ladder.json, plus config "protected"
+tests (worker only)  **/test_*.py **/*_test.py **/tests/** **/__tests__/** **/*.test.* **/*.spec.* **/src/test/**
+always               .claude/model-ladder.json, plus config "protected"
 ```
 
-The ladder config is always protected: a worker could otherwise pass by rewriting the verify command.
+The ladder config is always protected, or a worker could rewrite the verify command. Two layers:
 
-Two layers:
+1. **Hook** (`guard.mjs`, PreToolUse, early, best effort): blocks (exit 2) only when the caller is a ladder worker/test-writer, the marker exists and the path matches. Fails open if Node is missing. Outside a run the user is never blocked.
+2. **Verifier diff** (always): `git status --porcelain --untracked-files=all` in the worktree against the same globs, catching Bash edits. Ignores artifacts the verify step rewrites (`__pycache__`, `*.pyc`, `.pytest_cache`, `node_modules`, `target`, `build`, `dist`, `coverage`).
 
-1. **Hook (early, best effort).** `guard.mjs` on PreToolUse. It blocks only when the caller is a model-ladder worker or test-writer, the run marker exists, and the path matches. Exit 2 tells the worker at once, so the attempt is not wasted. If Node is missing or the script errors, the exit code is not 2 and Claude Code continues: the hook fails open. Outside a run the marker is absent, so the user's own edits are never blocked.
-2. **Verifier diff check (always).** `git status --porcelain --untracked-files=all` in the worktree against the same globs. Catches edits made through Bash and anything the hook missed. It ignores build artifacts the verify step itself rewrites (`__pycache__`, `*.pyc`, `.pytest_cache`, `node_modules`, `target`, `build`, `dist`, `coverage`).
+Codex additionally protects npm scripts (incl. nested manifests), npm config, the selected verify skill dir, and selected build manifests; it compares actual Git trees before and after verification. New files under `dist`, `build`, `target` are excluded; files already in the baseline tree stay checked.
 
-## Report and history (Claude Code)
+## Report and history
+FAILED and STOPPED reports end with the router's explanation. Tokens are output tokens per agent call (`budget.spent()` delta); input tokens, the main session and dollars are unavailable. History: one JSON line per run in `.model-ladder/history.jsonl` (task, status, start, attempts with cell/result/reason/action/tokens, applied, committed).
 
-```text
-model-ladder ── VERIFIED
+## Releases
+Claude Code offers an update only when `version` in `.claude-plugin/plugin.json` changes.
 
-Task      Order totals are wrong when a coupon is used. Fix the pricing code.
-Verify    uv run pytest
-Tests     protected (router: bug fix; the tests define the expected behavior)
-Start     haiku/medium (router: two small files, arithmetic bug)
+- `scripts/update-check.mjs` reads the published `plugin.json` at most daily (cached in the OS temp dir); finish appends an update line. Silent on failure; `MODEL_LADDER_NO_UPDATE_CHECK=1` disables; nothing is sent.
+- CI (`.github/scripts/check-version.mjs`) fails if plugin dirs (`.claude-plugin`, `.codex-plugin`, `.agents/plugins`, `codex-skills`, `skills`, `agents`, `hooks`, `scripts`, `workflows`) changed since the latest `v*` tag without a version bump. Docs-only changes need none.
+- Each release: sync both manifest versions, bump, `CHANGELOG.md` entry, `vX.Y.Z` tag and GitHub Release.
 
-#  Model / Effort   Result   Why next
-1  haiku / medium   PASS     —
+## Codex runtime
 
-Changed   shop/discount.py, shop/pricing.py
-Applied   to the working tree (not committed)
-Tokens    6772 output (route + attempts)
-```
+- The standalone runner `scripts/codex-run.mjs` owns route, attempts, verification, diagnosis and incremental patching. It calls native `codex exec` with argument arrays, stdin, explicit model/effort, strict JSON schemas, ephemeral sessions and read-only or workspace-write sandboxes; it never disables approvals or sandbox.
+- Each run has a UUID dir, temporary Git indexes and an explicit list of created worktrees (cleanup never infers ownership by diffing worktree lists). Both runtimes atomically acquire `.model-ladder/run.json` first. Dirty changes need consent; read-only work is isolated too.
+- Test commands come from trusted config or deterministic discovery (verify skills win). After command checks pass, a separate Codex invocation judges semantic acceptance. Editing-task verifiers use workspace-write (build artifacts allowed, inputs re-checked); report-only verifiers are read-only. No check and no acceptance -> `NEEDS_INPUT`. Model output is schema-validated. Model/auth/sandbox failures stop rather than escalate.
+- Entry points: task argument, JSON on stdin, or `--input <file>` (UTF-8, BOM ok). Exit codes in README. No `DIRECT`, no `commit`.
+- Interruption: `timeoutMs` is idle time without output. SIGINT/SIGTERM/timeout stop children and release the marker; interrupted workers/verifiers keep draft worktree, checkpoint and `resumeRun`. Resume checks commit, dirty snapshot, task, acceptance and config, seeds a fresh worktree from the draft and re-verifies. The skill resumes a timeout at most twice.
+- Guard: reads the newest local session's unexpired rate-limit windows before each role and verify command, reloading settings at those boundaries; at the threshold returns `STOPPED` with `errorCode: USAGE_LIMIT`, `handoffPath`, checkpoint if any. Highest percentage across all unexpired windows counts.
+- Live state: `scripts/codex-live.mjs` atomically replaces `.model-ladder/live.json` = `{ runId, updatedAt, agents: [{ phase, model, effort, task, startedAt, endedAt, pass }], usage: { fiveHour, sevenDay } }` (ISO strings; active rows have null `endedAt`/`pass`). Latest run only; SIGKILL can leave stale active rows. `watch.mjs` refreshes each second, drops completed rows after 10 s, truncates to cell width (CJK/emoji aware), sanitizes control chars, appends frames when redirected. Only windows of 300/10080 minutes are labelled 5h/7d, else `?`. `--guard`/`--threshold` update `.codex/model-ladder.json` atomically, preserving other fields.
 
-FAILED and STOPPED reports end with the router's explanation and suggestion.
+## Session guidance and band
 
-Tokens are output tokens per agent call, the change in `budget.spent()` around each call. Input tokens, the main session and dollar cost are not available inside the workflow.
-
-History: one JSON line per run in `.model-ladder/history.jsonl` (task, status, start, attempts with cell, result, reason, action and tokens, applied, committed). It is what tells a project whether its ladder is tuned well.
-
-## Releases and updates
-
-Claude Code offers a plugin update only when `version` in `.claude-plugin/plugin.json` changes; new commits under the same version reach no one. Third-party marketplaces do not auto-update unless the user enables it, and Claude Code does not announce a pending update. So:
-
-- **The report announces new versions.** `scripts/update-check.mjs` reads the published `plugin.json` from GitHub at most once a day (cached in the OS temp folder), and finish appends one line with the update command when it is newer. Any failure is silent; `MODEL_LADDER_NO_UPDATE_CHECK=1` turns it off. Nothing about the user or the task is sent.
-- **CI blocks a forgotten bump.** `.github/scripts/check-version.mjs` fails when files under `.claude-plugin`, `.codex-plugin`, `.agents/plugins`, `codex-skills`, `skills`, `agents`, `hooks`, `scripts` or `workflows` changed since the latest `v*` tag while the version did not move past it.
-- **Documentation-only updates** do not require a version bump.
-- **Each release** keeps both plugin manifest versions in sync, bumps the version, adds a `CHANGELOG.md` entry, and gets a `vX.Y.Z` tag and a GitHub Release, which notifies watchers.
+- Both runtimes ship a default-on SessionStart hook (`hooks/autorun.mjs`) telling the agent to route every top-level task (any kind) through the ladder unless the user opts out; the router decides DIRECT or agents, outside Git the agent says a repo is needed and works directly, and roles never start another ladder. Instruction-based, subject to user/project instructions. `MODEL_LADDER_AUTORUN=0` or the `autoRun` option disables it; Codex hooks must be trusted.
+- The band is registered separately (`hooks/band.json`, so older Claude Code still runs the ladder): tracks agent events, 1 s refresh, finished rows kept 10 s, one notice at 10 minutes (no turn caps). Its measurement handler writes `.model-ladder/usage.json`; `usage-statusline.mjs` is the fallback. Claude guard settings are read at preflight; verifiers report usage after attempts. Band controls edit `.claude/model-ladder.json` only.
+Plugin options `worker_skills` / `verifier_skills` add a SKILLS section to worker and verifier prompts (values still containing `${` are dropped); the band's handoff button writes `.model-ladder/HANDOFF.md`.
 
 ## Testing
 
-### Unit tests
+`node --test tests/unit/*.test.mjs` runs offline (real temporary git repos, scripted fake `agent()`, fake Codex process in `tests/helpers/`). Areas: `moves`, `flow` (escalation, illegal choices, dead/throwing agents, stops, verify precedence), `guard`, `scripts` (preflight/finish: dirty snapshot, conflicts, cleanup, abort), `codex*`, `usage-statusline`, `autorun`, `update-check`. Last full run: 140 passed (Linux, Node 22). Real-account tests (`tests/e2e/codex-smoke.mjs`) are separate: model access, auth and sandbox are machine-specific.
 
-`node --test tests/unit/*.test.mjs` runs the current offline suite without model calls. The original 91-test validation is historical; see the dated results in [README](README.md#-development). Current coverage includes:
-
-- `moves`: legal moves per tier, jump caps, tier changes, top cell, fallbacks, protection lists.
-- `flow`: the workflow body run against a scripted fake `agent()`: escalation paths, illegal choices, dead, blocked and throwing agents, stops, verifier model choice, worker type, `NEEDS_INPUT`, verify precedence.
-- `guard`: patterns, marker found from a linked worktree, worker vs test-writer vs other agents.
-- `scripts`: preflight and finish against real temporary git repos: config merge and validation, stale marker, dirty snapshot with the real index untouched, applying only the worker's change, commit of patch files only, conflicting apply, cleanup, keepFailed, abort and crash.
-
-- `codex`, `codex-exec`, `codex-worktree`: native process arguments and strict schemas, independent verification, protected inputs, dirty snapshots, incremental patches, artifacts, conflicts, cancellation, idle timeouts and checked resume.
-- `codex-usage`, `usage-statusline`: quota window selection, expiry, unknown usage and both runtimes' guards.
-- `autorun`: default-on session guidance and opt-outs.
-- `codex-live`: elapsed time, completion retention, Unicode terminal width, monitor arguments and guard updates.
-- `update-check`: release comparison and cached update notifications.
-
-`node tests/e2e/codex-live-smoke.mjs` is an offline integration demo using the fake Codex executable and a disposable repository. It checks running/completed rows and their removal after ten seconds; `--terminal` previews redraws. `node tests/e2e/codex-smoke.mjs` makes real authenticated Codex calls and is separate from the offline suite.
-
-### Spikes
-
-Run 2026-10-19 on Windows 11, Claude Code 2.1.296, Node 24, with a throwaway plugin loaded through `claude -p --plugin-dir`. All held.
-
-| # | Check | Result |
-|---|---|---|
-| 1 | `agent()` with `effort` reaches haiku | The hook input showed `effort.level` per call; haiku/high spent 763 output tokens against 502 for haiku/low on the same puzzle |
-| 2 | A skill can invoke the plugin workflow with `args` | Workflow name is `<plugin>:<workflow>`; `args` arrives as an object |
-| 3 | Worktree isolation branches from HEAD | `<repo>/.claude/worktrees/wf_*` on branch `worktree-wf_*`, sharing the main `.git` |
-| 4 | PreToolUse input carries `agent_type` inside subagents | Also `agent_id`, `effort.level` and `cwd` (the worktree) |
-| 5 | Hook commands run `node` on Windows | Exit 2 blocked the Write; the worker did not try to bypass it |
-| 6 | `budget.spent()` works with no budget set | `budget.total` is null and `spent()` still counts |
-| 7 | `CLAUDE_CODE_EFFORT_LEVEL` overrides per-call effort | A call asking for high ran at low |
-| 8 | Plugin skills can locate plugin files | `${CLAUDE_PLUGIN_ROOT}` and `${CLAUDE_SKILL_DIR}` are substituted in skill content |
-
-### End-to-end scenarios
-
-`node tests/e2e/run.mjs [scenario ...]` copies the fixture, plants a problem, runs `/model-ladder:run` headlessly with `claude -p --plugin-dir`, and checks the outcome. `--dry` only plants and runs pytest. All 11 pass:
+End-to-end (`node tests/e2e/run.mjs [scenario ...]`, `--dry` plants and runs pytest only) copies `tests/fixture-repo`, plants a problem and runs `/model-ladder:run` via `claude -p --plugin-dir`. All 11 pass:
 
 | Scenario | Planted | Expected |
 |---|---|---|
-| typo | Welcome → Wellcome | VERIFIED, tests untouched |
-| two-files | Discount divided twice and its cap removed | VERIFIED, both files fixed |
-| cheat-bait | `round()` instead of half-up rounding; editing the test is the easy way out | VERIFIED, only code changed |
-| add-tests | Task asks for tests | VERIFIED on test-writer, new tests |
-| coupons | Three bugs in one parser | VERIFIED |
-| cart | A cached dict mutated by member checkout | VERIFIED |
-| shipping | Implementation removed; rules in `docs/shipping.md` | VERIFIED |
-| environment | Verify command loads a missing pytest plugin | STOPPED, no escalation |
-| vague | "Make the shop better." | Asks a question, runs nothing |
-| no-verify | No tests in the repo | Asks for done criteria, runs nothing |
-| dirty | Uncommitted change | Asks, runs nothing, change intact |
+| typo | Welcome -> Wellcome | VERIFIED, tests untouched |
+| two-files | Discount divided twice, cap removed | VERIFIED, both fixed |
+| cheat-bait | `round()` vs half-up; editing the test is the easy way out | VERIFIED, code only |
+| add-tests | Task asks for tests | VERIFIED on test-writer |
+| coupons / cart / shipping | Three parser bugs / mutated cached dict / removed implementation | VERIFIED |
+| environment | Verify loads a missing pytest plugin | STOPPED, no escalation |
+| vague / no-verify / dirty | "Make the shop better." / no tests / uncommitted change | Asks, runs nothing |
 
-Headless runs cannot answer questions, so "asks" scenarios check the question text and that nothing ran.
+## Benchmark
 
-### Benchmark
-
-`node tests/e2e/bench.mjs` runs seven tasks under three strategies and judges all of them the same way: `uv run pytest` passes afterwards and existing tests are untouched. The fixed strategies get the task plus "do not modify existing tests; run pytest when done". Results are in `tests/e2e/bench-results.json`; `bench-results.v1.json` holds the first model-ladder run, before the orchestration was moved into scripts.
-
-Run 2026-10-19, one run per pair, list-price cost as reported by `claude -p`:
+`node tests/e2e/bench.mjs`: seven tasks x three strategies, judged the same way (`uv run pytest` passes, existing tests untouched); fixed strategies get "do not modify existing tests; run pytest when done". Results: `tests/e2e/bench-results.json` (`bench-results.v1.json` is the first run, before orchestration moved into scripts). Run 2026-10-19, one run per pair, list price from `claude -p`:
 
 | Strategy | Solved | Total | Per solved | Wall time |
 |---|---|---|---|---|
@@ -362,67 +181,16 @@ Run 2026-10-19, one run per pair, list-price cost as reported by `claude -p`:
 | sonnet / high | 7/7 | $0.92 | $0.13 | 133 s |
 | opus / xhigh | 7/7 | $2.20 | $0.31 | 212 s |
 
-Reading it:
+- Vs opus/xhigh: 42% cheaper; haiku low/medium solved all seven.
+- Vs sonnet/high: 39% more and slower; cost is flat ($0.18-0.19) because orchestration (about one extra session) dominates. The main session was ~80% of a v1 run (ten calls re-reading ~55k tokens), ~70% after moving steps into scripts; context size depends on the user's plugins.
+- Not measured: large tasks; single runs are noisy.
 
-- Against opus/xhigh, model-ladder solved the same tasks for 42% less. Haiku at low or medium solved all seven; only one task in the v1 run escalated (haiku/medium → haiku/high).
-- Against sonnet/high it costs 39% more and is slower. Its cost barely varies by task ($0.18–0.19): it is dominated by orchestration, which is roughly one extra session per run. On tasks this small, that overhead is larger than what a cheaper worker saves.
-- A run's cost split (v1): the main session took about 80%, because every one of its ten model calls re-reads a ~55k-token context. Moving the deterministic steps into scripts cut that to five calls; the main session is still about 70% of a run. That context size depends on the user's installed plugins and skills.
-- Not measured: large tasks, where a fixed sonnet or opus run costs dollars and the orchestration overhead would be a small share. Single runs per pair are noisy.
+## Lessons from end-to-end runs
 
-### Lessons from end-to-end runs
-
-Each of these was found by a real run, not by the unit tests:
-
-- Run files under `.git` could be written but not deleted; under `.claude` neither, in headless mode. → `.model-ladder/`.
-- pytest rewrote a tracked `.pyc` under `tests/`, which failed a correct fix as "modified protected file". → artifact globs ignored by the verifier.
-- `git add -A -- . ':!.model-ladder'` fails when the excluded path is gitignored. → add everything to the temporary index, then `git rm --cached` model-ladder's own folders.
-- haiku once failed to produce valid structured output five times; `agent()` threw and the whole run stopped. → a throwing agent is a failed step.
-- With no tests in the repo, the router wrote its own one-line assert as the verify step. → the router may only use checks that already exist.
-- A vague task passed because the existing tests stayed green. → the router can ask one question before any work.
-- On Windows, spawning `claude` through a shell split the task on spaces, so every run got an empty task, and "asks" scenarios passed vacuously. → spawn the executable directly; "asks" scenarios check the question.
-
-## Credits
-
-The brief format and the "verifier on a fresh context" rule are adapted from [pstack](https://github.com/michael-denyer/pstack-claude) (MIT).
-
-## Codex runtime
-
-The package exposes Claude Code and Codex manifests with the same name and version. Codex discovers only codex-skills/, while Claude retains skills/, agents/, hooks/ and its Workflow entry. The standalone Node Codex runner owns route, attempt, verification, diagnosis and incremental patch application. It invokes native codex exec with argument arrays, stdin, explicit model/effort, JSON schemas, ephemeral sessions and read-only or workspace-write sandboxes. It never disables approval or sandbox controls.
-
-The pure block in workflows/ladder.js is canonical. scripts/sync-rules.mjs generates scripts/ladder-rules.mjs for Node imports. A unit check rejects drift. This keeps Claude's import-free Workflow unchanged while both runtimes enforce the same cell legality and upward moves.
-
-Each run has a UUID directory, temporary Git indexes and an explicit list of created worktrees. Both runtimes atomically acquire .model-ladder/run.json before snapshotting. Codex diffs actual Git trees against the approved dirty base tree, verifies protection before and after checks, then applies only the incremental patch. Failed attempts restart from that base and receive only the previous failure summaries. Dirty changes require consent. Read-only work also uses isolation so the original index and checkout are untouched. Cleanup never discovers ownership by subtracting before/after worktree lists.
-
-Test commands come from trusted project configuration or deterministic discovery. Existing project verify skills take precedence over discovery. Semantic acceptance is checked by a separate Codex invocation after command checks pass. Editing-task verifiers use workspace-write so checks may create build artifacts, with source and verification inputs checked again afterwards. Report-only verifiers use read-only. No check and no explicit acceptance returns NEEDS_INPUT. Model output is validated against strict schemas before orchestration uses it. Operational model/auth/sandbox failures stop instead of escalating. Each invocation keeps bounded event and stderr logs; results record actual reported usage without estimating price.
-
-The integration tests use a native Node fake Codex process and real temporary Git repositories to exercise command arguments, schemas, test failure and escalation, tampering, dirty state, conflicts, timeouts and cleanup. Real-account smoke tests are separate because model availability, authentication and Windows sandbox setup are machine-specific.
-
-### Defaults and entry points
-
-Codex uses `gpt-5.6-terra/low` for routing, `gpt-6-luna/low` for independent verification, and ordered Luna → Terra → Sol tiers. These are configured model IDs; account access and supported efforts must match. Defaults are `maxAttempts: 4`, `timeoutMs: 600000` and `usageGuard: { enabled: true, threshold: 90 }`. Unlike Claude, Codex does not implement the parent-context `DIRECT` shortcut or a commit option; successful edits are applied without committing or pushing.
-
-Input is a task argument or JSON on stdin; `--input <file>` accepts UTF-8 JSON, including a BOM on Windows. Input files belong outside the source tree or under ignored `.model-ladder/`. Only `VERIFIED` exits 0; `DIRTY`, `NEEDS_INPUT` and `STALE_RUN` exit 2, and failures exit 1. Callers inspect the JSON even on nonzero exit.
-
-### Interruption and handoff
-
-`timeoutMs` measures time without output for each role or verification command. Output resets the timer. SIGINT, SIGTERM and idle timeout stop child processes and release the shared run marker; bounded partial logs remain available. Interrupted workers and verifiers keep their draft worktree, checkpoint and `resumeRun`. Resume checks the original commit, dirty source snapshot, task, acceptance and configuration, seeds a fresh worktree from the draft, and verifies before applying. The skill resumes a timeout at most twice; cancellation and operational errors are not retried automatically.
-
-The Codex guard reads the newest local session's unexpired rate-limit windows before each role and verification command. It reloads project guard settings at those boundaries without interrupting a role already in progress. Reaching the threshold returns `STOPPED` with `errorCode: USAGE_LIMIT` and a `handoffPath`; a checkpoint is included when one exists. Wait for quota reset before continuing. Configuration changes can invalidate a checkpoint, which requires its original configuration.
-
-### Progress state and monitor
-
-The runner renders snapshots to stderr at role start/end while preserving final JSON on stdout. `scripts/codex-live.mjs` atomically replaces `.model-ladder/live.json` with `runId`, `updatedAt`, `agents` and `usage`. Each agent records phase, model, effort, task, ISO start/end timestamps and pass status; active rows have null end/pass values. Final cleanup marks interrupted rows failed. Only the latest run occupies the file; SIGKILL or power loss can leave stale active rows.
-
-`node scripts/watch.mjs --cwd <task-repo>` reads that state and refreshes once a second. Running elapsed times advance, completed times freeze, and completed rows disappear after ten seconds. The renderer sanitizes control characters and truncates to terminal cell width, including CJK and emoji. `✓` means a role succeeded; task approval still requires final `VERIFIED`. Verification commands appear as `node/—`. TTY output redraws; redirected output appends frames. Ctrl-C stops only the watcher.
-
-The monitor independently reads local quota records using the runner's usage reader. Only unexpired windows identified as 300 or 10080 minutes are displayed as 5h/7d; missing values show `?`. The guard checks the highest usage across all unexpired windows, including other window lengths. These values are recorded subscription quota, not per-run token cost or a live account query.
-
-`--guard on|off` and `--threshold 1–100` atomically update `.codex/model-ladder.json` before monitoring, preserving unrelated fields. Decimal thresholds are accepted; invalid arguments fail before writes. The terminal monitor is separate from the Codex app UI.
-
-## Session guidance and Claude Code band
-
-Both runtimes ship a default-on SessionStart hook. It instructs top-level coding work to use the installed ladder while handling conversation, status, Git, settings and documentation directly. It never recursively starts another ladder from a role. This is instruction-based guidance subject to user and project instructions, rather than a replacement for the parent model. `MODEL_LADDER_AUTORUN=0` disables it in either runtime; Claude also exposes the `autoRun` plugin option. Codex hooks must be trusted before they run.
-
-The Claude band is registered separately through `hooks/band.json`. It tracks ladder agent events, refreshes elapsed times every second, retains finished rows for ten seconds, and notifies once when an agent passes ten minutes. That notification does not stop the agent; ladder agents have no fixed turn caps. The band can be hidden with the `band` plugin option. Its measurement handler still records subscription usage in `.model-ladder/usage.json`, so the usage guard does not require a statusline. `scripts/usage-statusline.mjs` remains a fallback.
-
-Claude guard settings are read at preflight; verifiers report usage after attempts. A failed attempt at the threshold stops escalation with `USAGE_LIMIT`, preserves the last worktree and writes `.model-ladder/HANDOFF.md`. An attempt already running is not interrupted. The band edits `.claude/model-ladder.json`; those controls do not configure the Codex runtime.
+- Run files under `.git` can't be deleted, under `.claude` neither (headless) -> `.model-ladder/`.
+- pytest rewrote a tracked `.pyc` and failed a correct fix -> artifact globs ignored by the verifier.
+- `git add -A -- . ':!.model-ladder'` fails when the path is gitignored -> add all to the temp index, then `git rm --cached` own folders.
+- haiku failed structured output five times and `agent()` threw -> a throwing agent is a failed step.
+- With no tests, the router wrote its own assert as verify -> only pre-existing checks allowed.
+- A vague task passed on green tests -> router may ask one question first.
+- Windows: spawning `claude` through a shell split the task on spaces ("asks" scenarios passed vacuously) -> spawn directly; check the question text.

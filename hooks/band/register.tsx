@@ -23,7 +23,8 @@ async function editConfig($: EngineInterface, edit: (c: Config) => Config) {
 const taskOf = (prompt: string, fallback: string) => (prompt.match(/TASK[^\n]*\n\s*([^\n]+)/)?.[1] ?? fallback).trim()
 // claude-haiku-5-5 -> haiku-5.5; an alias such as haiku stays as is.
 const modelName = (id: string) => id.replace(/^claude-/, '').replace(/-\d{8}$/, '').replace(/-(\d+)-(\d+)$/, '-$1.$2')
-const seconds = (ms: number) => (ms < 60000 ? `${Math.round(ms / 1000)}s` : `${Math.floor(ms / 60000)}m${Math.round((ms % 60000) / 1000)}s`)
+// Largest unit only, floored: 42s, 5m, 4h, 3d.
+const span = (ms: number) => (ms < 60000 ? `${Math.floor(ms / 1000)}s` : ms < 3600000 ? `${Math.floor(ms / 60000)}m` : ms < 86400000 ? `${Math.floor(ms / 3600000)}h` : `${Math.floor(ms / 86400000)}d`)
 const fit = (text: string, width: number) => (text.length > width ? `${text.slice(0, width - 1)}…` : text.padEnd(width))
 const DONE_MS = 10000
 const LONG_MS = 10 * 60 * 1000
@@ -38,6 +39,24 @@ const clip = (text: string, cols: number) => {
   return out
 }
 const WINDOW: Record<string, string> = { five_hour: '5h', seven_day: '7d' }
+// Time until a window resets: "54m", "2h" or "3d"; empty when unknown or already past.
+const remaining = (resetsAt: string | null | undefined, now: number) => {
+  const ms = Date.parse(resetsAt ?? '') - now
+  return ms > 0 ? span(ms) : ''
+}
+
+// Same shape as scripts/finish.mjs handoff(), for a run that is still going or just ended.
+const handoffText = (running: Row[], now: number, last: any) => {
+  const out = ['# model-ladder handoff', '']
+  if (running.length) out.push('## Running', ...running.map((r) => `- ${r.cell}, ${span(now - r.startedAt)}: ${r.task}`), '')
+  if (last) {
+    out.push('## Task', last.task, '', `## Last run (${last.date}): ${last.status}`, `Start: ${last.start ? `${last.start.model}/${last.start.effort}` : 'none'}`, '', '## Attempts',
+      ...(last.attempts?.length ? last.attempts.map((a: any, i: number) => `${i + 1}. ${a.cell}: ${a.pass ? 'PASS' : 'FAIL'} ${a.reason}`) : ['none']),
+      '', `Applied: ${last.applied ? 'yes' : 'no'}`, '')
+  }
+  out.push('## Resume', `Run \`/model-ladder:run ${last?.task ?? running.at(-1)?.task}\` again.`, '')
+  return out.join('\n')
+}
 
 export const register: Register = (on, options) => {
   // Redraws once a second while an agent runs, so its elapsed time moves.
@@ -117,10 +136,13 @@ export const register: Register = (on, options) => {
     const els = $.ui.resolve(e)
     const { Box, Button, Text } = els
     const now = await $.clock.now()
-    const elapsed = (r: Row) => `${r.status === 'done' ? '✓ ' : ''}${seconds(r.ms ?? now - r.startedAt)}`
+    const elapsed = (r: Row) => `${r.status === 'done' ? '✓ ' : ''}${span(r.ms ?? now - r.startedAt)}`
     const usage = (await $.session.usage()).rateLimits
       .filter((w) => WINDOW[w.kind])
-      .map((w) => `${WINDOW[w.kind]} ${Math.round(w.percentUsed)}%`)
+      .map((w) => {
+        const left = remaining(w.resetsAt, now)
+        return `${left ? `${left}/` : ''}${WINDOW[w.kind]} ${Math.round(w.percentUsed)}%`
+      })
       .join(' · ')
     const folded = await read($, isFolded)
     const fold = <Button key="fold" plain dimColor label={folded ? '▾' : '▴'} onPress={() => update($, isFolded, (v) => !v)} />
@@ -138,7 +160,24 @@ export const register: Register = (on, options) => {
     }
 
     const config = await readConfig($)
+    // Plain-string settings from the plugin manager; shown so the run's companions are visible.
+    const withs = [options.worker_skills && `worker ${options.worker_skills}`, options.verifier_skills && `verifier ${options.verifier_skills}`].filter(Boolean)
+    const handoff = async () => {
+      const dir = `${await $.session.cwd()}/.model-ladder`
+      let last = null
+      try { last = JSON.parse((await $.fs.read(`${dir}/history.jsonl`)).trim().split('\n').at(-1) ?? '') } catch { /* no history yet */ }
+      const live = (await read($, rows)).filter((r) => r.status === 'running')
+      if (!live.length && !last) return $.ui.toast('model-ladder: no run to hand off')
+      try {
+        await $.fs.write(`${dir}/HANDOFF.md`, handoffText(live, await $.clock.now(), last))
+        $.ui.toast(`model-ladder: wrote ${dir}/HANDOFF.md`)
+      } catch (error) {
+        $.ui.toast(`model-ladder: handoff failed: ${error instanceof Error ? error.message : String(error)}`)
+      }
+    }
     const guard = config.usageGuard ?? {}
+    // Matches the default in scripts/preflight.mjs: a missing setting is on.
+    const enabled = guard.enabled ?? true
     const threshold = guard.threshold ?? 90
     const save = (value: string) => {
       const n = Number(value.trim().replace(/%$/, ''))
@@ -163,20 +202,23 @@ export const register: Register = (on, options) => {
           <Text bold> model-ladder </Text>
           <Text dimColor>── {usage || 'usage unknown'}{running.length ? '' : ' · idle'}</Text>
         </Box>
+        {withs.length > 0 && <Text dimColor>with: {withs.join(' · ')}</Text>}
         {shown.length > 0 && row('head', 'model/effort', 'time', 'task', true)}
         {shown.map((r) => row(r.id, r.cell, elapsed(r), clip(r.task, taskCols)))}
         <Box>
-          <Button key="guard" plain label={`usage guard: ${guard.enabled ? 'on' : 'off'}`}
-            onPress={() => editConfig($, (c) => ({ ...c, usageGuard: { enabled: !guard.enabled, threshold } }))} />
-          {guard.enabled && 'Input' in els && <Text dimColor>  threshold </Text>}
-          {guard.enabled && 'Input' in els && (
+          <Button key="guard" plain label={`usage guard: ${enabled ? 'on' : 'off'}`}
+            onPress={() => editConfig($, (c) => ({ ...c, usageGuard: { enabled: !enabled, threshold } }))} />
+          {enabled && 'Input' in els && <Text dimColor>  threshold </Text>}
+          {enabled && 'Input' in els && (
             <Box flexShrink={0} width={e.surface === 'terminal' ? 6 : 10}>
               <els.Input key="threshold" value={String(threshold)} onInput={(value) => { draft = value }} onSubmit={(value) => save(value)} />
             </Box>
           )}
-          {guard.enabled && 'Input' in els && <Text dimColor> % </Text>}
-          {guard.enabled && 'Input' in els && <Button key="set" plain label="set" onPress={() => save(draft ?? String(threshold))} />}
-          {guard.enabled && !('Input' in els) && <Text dimColor>  threshold {threshold}%</Text>}
+          {enabled && 'Input' in els && <Text dimColor> % </Text>}
+          {enabled && 'Input' in els && <Button key="set" plain label="set" onPress={() => save(draft ?? String(threshold))} />}
+          {enabled && !('Input' in els) && <Text dimColor>  threshold {threshold}%</Text>}
+          <Text dimColor>  </Text>
+          <Button key="handoff" plain label="handoff now" onPress={() => { void handoff() }} />
         </Box>
       </Box>
     )

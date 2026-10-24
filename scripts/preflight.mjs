@@ -56,7 +56,7 @@ export function loadConfig(root) {
 
 function main(flags) {
   const head = tryGit(process.cwd(), 'rev-parse', 'HEAD')
-  if (!head.ok) return { status: 'ERROR', message: 'model-ladder needs a git repository with at least one commit.' }
+  if (!head.ok) return { status: 'ERROR', message: 'model-ladder needs a git repository with at least one commit. Do the task directly instead, and tell the user.' }
   const root = repoRoot()
   const run = runDir(root)
   mkdirSync(run, { recursive: true })

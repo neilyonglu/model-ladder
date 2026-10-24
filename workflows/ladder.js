@@ -210,6 +210,13 @@ function summarize(attempt, i) {
     (attempt.diagnosis ? ` -> ${attempt.diagnosis.action}: ${attempt.diagnosis.reason}` : '')
 }
 
+// Comma list from the plugin settings; a value still holding "${" was never substituted.
+const skillList = (v) => String(v ?? '').split(',').map((s) => s.trim()).filter((s) => s && !s.includes('${'))
+const skillsSection = (v) => {
+  const list = skillList(v)
+  return list.length ? `SKILLS\n  Before starting, load each with the Skill tool: ${list.join(', ')}` : null
+}
+
 function brief(plan, history, hint) {
   const sections = [
     `GOAL\n  ${plan.goal}`,
@@ -233,6 +240,8 @@ function brief(plan, history, hint) {
     sections.push(`PREVIOUS ATTEMPTS (each started from a clean tree like yours; their code is gone)\n${bullets(history.map(summarize))}`)
     sections.push(`HINT\n  ${hint}`)
   }
+  const skills = skillsSection(args.skills?.worker)
+  if (skills) sections.push(skills)
   sections.push('REPORT\n  worktreePath: the output of `git rev-parse --show-toplevel` (not pwd).\n  status "blocked" only if the task cannot be done; say why in blockedReason.')
   return sections.join('\n\n')
 }
@@ -253,7 +262,7 @@ ACCEPTANCE
 ${bullets(plan.acceptance)}
 
 The worker claims: ${work.summary}
-Do not trust the claim; check.
+Do not trust the claim; check.${skillsSection(args.skills?.verifier) ? `\n\n${skillsSection(args.skills?.verifier)}` : ''}
 
 Return output as the last ${OUTPUT_LINES} lines of what you ran.${args.usageGuard ? `
 

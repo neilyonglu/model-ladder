@@ -311,3 +311,15 @@ test('usageGuard on: a passing attempt is VERIFIED even above the threshold', as
   const { out } = await runWith([{ label: 'worker', result: done }, { label: 'verify', result: { ...pass, usage: '99' } }], { usageGuard })
   assert.equal(out.status, 'VERIFIED')
 })
+
+test('SKILLS section lists the parsed skills, and is absent when missing or unsubstituted', async () => {
+  const skills = { worker: ' a:a, ,b ', verifier: 'v:v' }
+  const { calls } = await runWith([{ label: 'worker', result: done }, { label: 'verify', result: pass }], { skills })
+  assert.match(calls[0].prompt, /SKILLS\n  Before starting, load each with the Skill tool: a:a, b\n/)
+  assert.match(calls[1].prompt, /SKILLS\n  Before starting, load each with the Skill tool: v:v/)
+  for (const extra of [{}, { skills: { worker: '${user_config.worker_skills}', verifier: '' } }]) {
+    const r = await runWith([{ label: 'worker', result: done }, { label: 'verify', result: pass }], extra)
+    assert.doesNotMatch(r.calls[0].prompt, /SKILLS/)
+    assert.doesNotMatch(r.calls[1].prompt, /SKILLS/)
+  }
+})

@@ -21,6 +21,18 @@
       "title": "Show the band",
       "description": "Show the model-ladder band above the prompt: subscription usage, the ladder agents running now, and the usage guard switch. Off hides it; the usage guard keeps working.",
       "default": true
+    },
+    "worker_skills": {
+      "type": "string",
+      "title": "Skills for workers",
+      "description": "Comma-separated skill names that ladder workers and test-writers load before working, e.g. ponytail:ponytail. Empty = none.",
+      "default": ""
+    },
+    "verifier_skills": {
+      "type": "string",
+      "title": "Skills for the verifier",
+      "description": "Comma-separated skill names that the ladder verifier loads before checking, e.g. ponytail:ponytail. Empty = none.",
+      "default": ""
     }
   }
 }

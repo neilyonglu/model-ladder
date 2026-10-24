@@ -1,6 +1,6 @@
 ---
 name: run
-description: Run a coding task through model-ladder. It starts on the cheapest model and effort likely to succeed, verifies the result, and escalates on failure. Use for /model-ladder:run or when the user asks to run a task through model-ladder.
+description: Run a task through model-ladder. It starts on the cheapest model and effort likely to succeed, verifies the result, and escalates on failure. Use for /model-ladder:run or when the user asks to run a task through model-ladder.
 argument-hint: <task>
 model: sonnet
 effort: medium
@@ -23,7 +23,9 @@ Run `node "${CLAUDE_PLUGIN_ROOT}/scripts/preflight.mjs"` and act on `status`:
 
 ## 2. Workflow
 
-Call the Workflow tool with name `model-ladder:ladder` and args `{ "task": "<task>", "contextTokens": <estimate>, "forceLadder": <bool>, ...workflowArgs }` (a JSON object, not a string).
+Call the Workflow tool with name `model-ladder:ladder` and args `{ "task": "<task>", "contextTokens": <estimate>, "forceLadder": <bool>, ...workflowArgs, "skills": { "worker": "${user_config.worker_skills}", "verifier": "${user_config.verifier_skills}" } }` (a JSON object, not a string).
+
+- `skills`: companion skills per role from the plugin settings, passed through unchanged (empty means none).
 
 - `contextTokens`: your estimate of this session's current context size in tokens. The router weighs it against the task: orchestration re-reads this context on every turn.
 - `forceLadder`: true when the task starts with `--ladder`; drop that flag from the task.
