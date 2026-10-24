@@ -4,6 +4,12 @@ All notable changes to model-ladder. Versions follow [semantic versioning](https
 
 ## [Unreleased]
 
+## [1.7.1] - 2026-10-24
+
+### Fixed
+
+- Band threshold input no longer loses its number after Enter.
+
 ## [1.7.0] - 2026-10-24
 
 ### Added

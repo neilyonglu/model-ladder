@@ -1,6 +1,6 @@
 # model-ladder — Design
 
-Maintainer notes. User docs are in [README.md](README.md). A router model picks the start and diagnoses failures; code enforces the escalation rules. v1.7.0 supports Claude Code and Codex.
+Maintainer notes. User docs are in [README.md](README.md). A router model picks the start and diagnoses failures; code enforces the escalation rules. v1.7.1 supports Claude Code and Codex.
 
 ## Goals
 
