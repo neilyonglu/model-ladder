@@ -114,10 +114,10 @@ A band above the prompt shows each running ladder agent and the usage guard. Nee
 ▴ model-ladder ── 2h/5h 15% · 3d/7d 44%
 model/effort        time     task
 haiku-5.5/low       ✓ 5s     Summarize the README install steps
-[usage guard: on]  threshold [90] % [set]
+[usage guard: on]  threshold [90] %
 ```
 
-The header is `<time to reset>/<window> <percent>`. A `handoff now` button writes `.model-ladder/HANDOFF.md` for the current or last run. `usage guard` and `threshold` write `.claude/model-ladder.json` and apply from the next run. Codex has the same table via `scripts/watch.mjs` (`--guard on|off`, `--threshold 1-100`).
+The header is `<time to reset>/<window> <percent>`. A `handoff now` button writes `.model-ladder/HANDOFF.md` for the current or last run. `usage guard` and `threshold` write `.claude/model-ladder.json` and apply from the next run. The threshold saves 5 seconds after you stop typing, or at once on Enter. Codex has the same table via `scripts/watch.mjs` (`--guard on|off`, `--threshold 1-100`).
 
 ## Usage guard
 

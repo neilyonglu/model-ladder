@@ -28,6 +28,7 @@ const span = (ms: number) => (ms < 60000 ? `${Math.floor(ms / 1000)}s` : ms < 36
 const fit = (text: string, width: number) => (text.length > width ? `${text.slice(0, width - 1)}…` : text.padEnd(width))
 const DONE_MS = 10000
 const LONG_MS = 10 * 60 * 1000
+const SETTLE_MS = 5000
 // Cuts text to a width in cells, counting CJK and other wide characters as two.
 const clip = (text: string, cols: number) => {
   let out = '', used = 0
@@ -61,8 +62,10 @@ const handoffText = (running: Row[], now: number, last: any) => {
 export const register: Register = (on, options) => {
   // Redraws once a second while an agent runs, so its elapsed time moves.
   let tick: Timer | null = null
-  // What the person typed in the threshold field, until they press set.
+  // What the person typed in the threshold field, until it saves.
   let draft: string | null = null
+  // Saves the typed threshold once typing pauses for a second; Enter saves at once.
+  let settle: Timer | null = null
   // Agents already told about; a long run is only reported, never stopped.
   const warned = new Set<string>()
 
@@ -211,11 +214,20 @@ export const register: Register = (on, options) => {
           {enabled && 'Input' in els && <Text dimColor>  threshold </Text>}
           {enabled && 'Input' in els && (
             <Box flexShrink={0} width={e.surface === 'terminal' ? 6 : 10}>
-              <els.Input key="threshold" value={String(threshold)} onInput={(value) => { draft = value }} onSubmit={(value) => save(value)} />
+              <els.Input key="threshold" value={String(threshold)}
+                onInput={(value) => {
+                  draft = value
+                  settle?.cancel()
+                  settle = $.clock.after(SETTLE_MS, () => {
+                    settle = null
+                    const typed = draft?.trim() ?? ''
+                    if (typed && typed !== String(threshold)) void save(typed)
+                  })
+                }}
+                onSubmit={(value) => { settle?.cancel(); settle = null; return save(value) }} />
             </Box>
           )}
           {enabled && 'Input' in els && <Text dimColor> % </Text>}
-          {enabled && 'Input' in els && <Button key="set" plain label="set" onPress={() => save(draft ?? String(threshold))} />}
           {enabled && !('Input' in els) && <Text dimColor>  threshold {threshold}%</Text>}
           <Text dimColor>  </Text>
           <Button key="handoff" plain label="handoff now" onPress={() => { void handoff() }} />
