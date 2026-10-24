@@ -4,6 +4,25 @@ All notable changes to model-ladder. Versions follow [semantic versioning](https
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-10-24
+
+### Added
+
+- Band status dot before the title: 🟢 a worker, test-writer or router is running, 🔵 the verifier is running, 🔴 a worker is retrying after a failed check in the same run. No dot when nothing runs.
+- Band `[handoff now]` button writes `.model-ladder/HANDOFF.md`; the usage header shows a reset countdown such as `2h/5h 15%`.
+- Plugin options `worker_skills` and `verifier_skills` load companion skills into those roles; the band shows them as `with: …`.
+
+### Changed
+
+- Every top-level task goes through the ladder, which decides direct vs agents; outside git, the session says so and works directly.
+- Band threshold saves 5 seconds after typing stops (Enter saves at once); the set button is gone.
+- Outside the terminal, the band's task column fills the row and truncates at the edge.
+- README reorganized by features and scenarios.
+
+### Fixed
+
+- The verifier no longer counts the user's uncommitted changes as the worker's: SETUP stages the setup patch, so the diff shows only the worker's edits.
+
 ### Documentation
 
 - Bring the design document up to v1.6.0: both runtime entry points, default-on session guidance and usage guards, Claude band, Codex idle timeout/resume, and live monitor state and controls.
