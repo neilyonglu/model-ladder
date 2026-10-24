@@ -536,3 +536,24 @@ test('npm prefix and workspace delegation protect nested manifest scripts while 
   assert.equal(JSON.parse(read(dir, 'frontend/package.json')).dependencies.example, '1.0.0')
   cleaned(dir)
 })
+
+test('role companion skills reach the correct role and appear in live state', async () => {
+  const dir = fixture({}, { worker_skills: 'worker-helper, shared', verifier_skills: 'verify-helper' })
+  const result = await run(dir)
+  assert.equal(result.status, 'VERIFIED', JSON.stringify(result))
+  const log = calls(dir)
+  assert.match(log.find((c) => c.phase === 'worker').prompt, /SKILLS\n.*worker-helper, shared/)
+  assert.doesNotMatch(log.find((c) => c.phase === 'worker').prompt, /verify-helper/)
+  assert.match(log.find((c) => c.phase === 'verify').prompt, /SKILLS\n.*verify-helper/)
+  assert.doesNotMatch(log.find((c) => c.phase === 'route').prompt, /SKILLS\n/)
+  assert.equal(JSON.parse(read(dir, '.model-ladder/live.json')).skills.worker, 'worker-helper, shared')
+  cleaned(dir)
+})
+
+test('report-only tasks without tests use independent review without asking for criteria', async () => {
+  const dir = fixture({ readOnly: true }, { verify: null })
+  const result = await run(dir)
+  assert.equal(result.status, 'VERIFIED', JSON.stringify(result))
+  assert.equal(result.outcome.applied, false)
+  cleaned(dir)
+})

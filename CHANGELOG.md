@@ -4,6 +4,15 @@ All notable changes to model-ladder. Versions follow [semantic versioning](https
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-10-24
+
+- Codex session hook and skill initialize a persistent desktop terminal panel before tasks, independently of autorun; internal roles suppress panel/autorun setup.
+- Codex panel gains worker/verifier/retry status colors, rounded quota-reset countdowns, role companion skills, guard controls and immediate handoff (`g`, `t 90`, `h`, Enter).
+- Codex accepts `autoRun`, `band`, `worker_skills`, `verifier_skills`; includes native create/maintain verification skills using `.agents/skills/verify/`.
+- Quota stops also write the shared `.model-ladder/HANDOFF.md` with checkpoint resume input. Report-only tasks can be independently reviewed without a test command.
+- Both runtimes bundle create/maintain verification skills adapted from pstack; finish input is guarded before file changes.
+- Claude band reset countdowns round consistently across unit boundaries.
+
 ## [1.7.1] - 2026-10-24
 
 ### Fixed

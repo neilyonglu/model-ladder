@@ -8,6 +8,9 @@ assert.equal(args[0], 'exec')
 const arg = (name) => args[args.indexOf(name) + 1]
 const cwd = arg('-C')
 const phase = basename(arg('--output-schema')).split('.')[0]
+assert.equal(process.env.MODEL_LADDER_ROLE, phase)
+assert.equal(process.env.MODEL_LADDER_BAND, '0')
+assert.equal(process.env.MODEL_LADDER_AUTORUN, '0')
 const schema = JSON.parse(readFileSync(arg('--output-schema'), 'utf8'))
 assert.equal(schema.additionalProperties, false)
 assert.deepEqual(schema.required, Object.keys(schema.properties))

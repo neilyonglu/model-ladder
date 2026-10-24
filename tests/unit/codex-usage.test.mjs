@@ -43,3 +43,9 @@ test('details distinguish window durations, expired and unknown data without cha
   assert.deepEqual(details(), { fiveHour: null, sevenDay: null })
   assert.equal(readCodexUsage(dir), 99)
 })
+
+test('panel usage includes the reset timestamp of each labelled window on request', () => {
+  const dir = home()
+  session(dir, 'a.jsonl', [event({ used_percent: 15, resets_at: future, window_minutes: 300 }, null)], 1000)
+  assert.deepEqual(readCodexUsage(dir, undefined, { details: true, resets: true }), { fiveHour: 15, sevenDay: null, fiveHourResetsAt: future, sevenDayResetsAt: null })
+})

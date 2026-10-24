@@ -27,10 +27,10 @@ model-ladder is a plugin for [Claude Code](https://code.claude.com) and Codex. I
 - **Router diagnosis**: after a failure the router picks the next step, or stops and explains when the problem is the environment or an unclear task.
 - **Read-only tasks**: questions and reviews run on the ladder too, with no files changed.
 - **Usage guard**: stops before you burn through your 5-hour or weekly limit.
-- **The band** (Claude Code): live agents, usage with reset countdown like `2h/5h 15%`, and a `[handoff now]` button.
+- **The band / panel**: live agents, usage with reset countdown like `2h/5h 15%`, and a `[handoff now]` button.
 - **Companion skills per role**: `worker_skills` and `verifier_skills` load skills such as `ponytail:ponytail`.
 - **Handoff file**: `.model-ladder/HANDOFF.md` lets you or another session pick up a run.
-- **Codex support**: same rules with Codex models.
+- **Codex support**: same rules, companion skills and verification-skill tools with Codex models.
 
 ## Install
 
@@ -81,7 +81,7 @@ Applied   to the working tree (not committed)
 
 Verify is your test command and each table row is one attempt. It asks first when you have uncommitted changes, the task is vague, no tests exist, or `CLAUDE_CODE_EFFORT_LEVEL` / `CLAUDE_CODE_SUBAGENT_MODEL_FORCE` is set. Every run is logged to `.model-ladder/history.jsonl`. No verify step yet? `/model-ladder:create-verification-skill` generates `.claude/skills/verify/` and `/model-ladder:maintain-verification-skill` keeps it current (both adapted from [pstack](https://github.com/michael-denyer/pstack-claude), MIT, see NOTICE.md).
 
-Codex runner directly: `node scripts/codex-run.mjs "<task>"`; only `VERIFIED` exits 0. Watch it live with `node scripts/watch.mjs [--cwd <repo>]`. Codex uses router `gpt-5.6-terra/low`, verifier `gpt-6-luna/low` and tiers Luna, Terra, Sol (replace with models your account has); it has no `DIRECT` shortcut or `commit` option.
+Codex runner directly: `node scripts/codex-run.mjs "<task>"`; only `VERIFIED` exits 0. In Codex desktop, the session hook and ladder skill instruct Codex to start and show a persistent terminal panel automatically. Reuse it across tasks. You can also watch manually with `node scripts/watch.mjs [--cwd <repo>]`. If no terminal panel is available, the runner prints progress in the tool output. Codex uses router `gpt-5.6-terra/low`, verifier `gpt-6-luna/low` and tiers Luna, Terra, Sol (replace with models your account has); it has no `DIRECT` shortcut or `commit` option.
 
 ## Configure
 
@@ -100,7 +100,7 @@ Optional per project: `.claude/model-ladder.json` (Claude Code) or `.codex/model
 | `usageGuard` | `{"enabled":true,"threshold":90}` | Stop at `threshold`% (1-100) of the 5-hour or weekly limit; fields can be set alone |
 | `timeoutMs` | `600000` | Codex only: idle limit per role or verify command |
 
-Models are aliases (`haiku`, `sonnet`, `opus`), so new versions are picked up automatically. Codex `tiers` use `efforts` and `maxEffortJump` the same way. Without `verify`, Codex uses `.agents/skills/verify/SKILL.md` or `.claude/skills/verify/SKILL.md` if present, else an existing npm, pytest, Cargo, Go, Maven or Make test command.
+Models are aliases (`haiku`, `sonnet`, `opus`), so new versions are picked up automatically. Codex also supports `autoRun` and `band` (booleans, default `true`) plus `worker_skills` and `verifier_skills` (comma-separated strings) in `.codex/model-ladder.json`. `MODEL_LADDER_BAND=0` hides the Codex panel independently of autorun. Codex `tiers` use `efforts` and `maxEffortJump` the same way. Without `verify`, Codex uses `.agents/skills/verify/SKILL.md` or `.claude/skills/verify/SKILL.md` if present, else an existing npm, pytest, Cargo, Go, Maven or Make test command.
 
 Plugin options (`/plugin configure model-ladder`): `autoRun` (use the ladder by default) and `band` (show the band), both on. `worker_skills` and `verifier_skills` are comma-separated skills those roles load before working, e.g. `ponytail:ponytail`; the band shows them as `with: …`.
 
@@ -117,7 +117,11 @@ haiku-5.5/low       ✓ 5s     Summarize the README install steps
 [usage guard: on]  threshold [90] %
 ```
 
-The header is `<time to reset>/<window> <percent>`. A `handoff now` button writes `.model-ladder/HANDOFF.md` for the current or last run. `usage guard` and `threshold` write `.claude/model-ladder.json` and apply from the next run. The threshold saves 5 seconds after you stop typing, or at once on Enter. Codex has the same table via `scripts/watch.mjs` (`--guard on|off`, `--threshold 1-100`).
+The header is `<time to reset>/<window> <percent>`. A `handoff now` button writes `.model-ladder/HANDOFF.md` for the current or last run. `usage guard` and `threshold` write `.claude/model-ladder.json` and apply from the next run. The threshold saves 5 seconds after you stop typing, or at once on Enter. Codex has the same status colors, reset countdown, companion-skills line and guard controls in its terminal panel. Enter `g` to toggle the guard, `t 90` to save a threshold immediately, `h` to write `.model-ladder/HANDOFF.md`, or `q` to close the panel; press Enter after each command. The CLI also accepts `--guard on|off`, `--threshold 1-100`, and `--handoff`. Handoff records the running or last run without cancelling it; quota stops include the checkpoint input for resuming. A Codex terminal panel is separate from Claude's band above the prompt.
+
+Codex installs `$create-verification-skill` and `$maintain-verification-skill` too; they create/maintain `.agents/skills/verify/`. The runner also accepts an existing `.claude/skills/verify/`.
+
+If Codex does not autorun or show its panel, check that the plugin is enabled, restart the session after updating, and review/trust its current hook definition in Codex. Installing a plugin does not automatically trust hooks ([official hook packaging documentation](https://developers.openai.com/plugins/build/plugins#bundled-mcp-servers-and-lifecycle-hooks)). Calling the model-ladder skill explicitly also initializes the panel. No editor UI extension is loaded by the Codex hooks.
 
 ## Usage guard
 

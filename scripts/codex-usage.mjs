@@ -18,7 +18,7 @@ const newest = (dir) => {
 }
 // Highest used_percent among unexpired windows of the latest Codex session; null = unknown (never blocks).
 // details: true returns labelled 5h/7d windows instead, with null for unknown/expired windows.
-export function readCodexUsage(home = process.env.CODEX_HOME ?? join(homedir(), '.codex'), now = Date.now() / 1000, { details = false } = {}) {
+export function readCodexUsage(home = process.env.CODEX_HOME ?? join(homedir(), '.codex'), now = Date.now() / 1000, { details = false, resets = false } = {}) {
   const unknown = details ? { fiveHour: null, sevenDay: null } : null
   try {
     const file = newest(join(home, 'sessions'))
@@ -33,7 +33,7 @@ export function readCodexUsage(home = process.env.CODEX_HOME ?? join(homedir(), 
       if (details) {
         // Only label known window durations; primary/secondary are not guaranteed to be 5h/7d.
         const percent = (minutes) => live.find((w) => w.window_minutes === minutes)?.used_percent ?? null
-        return { fiveHour: percent(300), sevenDay: percent(10080) }
+        return { fiveHour: percent(300), sevenDay: percent(10080), ...(resets ? { fiveHourResetsAt: live.find((w) => w.window_minutes === 300)?.resets_at ?? null, sevenDayResetsAt: live.find((w) => w.window_minutes === 10080)?.resets_at ?? null } : {}) }
       }
       return live.length ? Math.max(...live.map((w) => w.used_percent)) : null
     }

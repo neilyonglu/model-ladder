@@ -44,12 +44,12 @@ function kill(child) {
   }
 }
 
-export function processRun(command, args, { cwd, input = '', timeoutMs = 600000, signal, shell = false } = {}) {
+export function processRun(command, args, { cwd, input = '', timeoutMs = 600000, signal, shell = false, env: extraEnv = {} } = {}) {
   return new Promise((resolve, reject) => {
     let stdout = '', stderr = '', stopped = null
     const failure = (message, code) => Object.assign(new EnvironmentError(message), { code, cwd, stdout, stderr })
     if (signal?.aborted) return reject(failure('Cancelled', 'CANCELLED'))
-    const env = { ...process.env }
+    const env = { ...process.env, ...extraEnv }
     delete env.NODE_TEST_CONTEXT
     const child = spawn(command, args, { cwd, env, shell, windowsHide: true, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'] })
     const stop = (code) => { if (!stopped) { stopped = code; kill(child) } }
@@ -81,7 +81,7 @@ export async function codexExec({ phase, cell, cwd, run, prompt, sandbox, timeou
     '-C', cwd, '--json', '--output-schema', schemaPath, '-o', outputPath, '--ephemeral', '--sandbox', sandbox, '-']
   let result
   try {
-    result = await processRun(executable?.command ?? process.env.CODEX_BINARY ?? 'codex', args, { cwd, input: `This is one internal model-ladder role. Do not invoke model-ladder skills, workflows or runners recursively; perform only the assigned role.\n\n${prompt}`, timeoutMs, signal })
+    result = await processRun(executable?.command ?? process.env.CODEX_BINARY ?? 'codex', args, { cwd, input: `This is one internal model-ladder role. Do not invoke model-ladder skills, workflows or runners recursively; perform only the assigned role.\n\n${prompt}`, timeoutMs, signal, env: { MODEL_LADDER_ROLE: phase, MODEL_LADDER_AUTORUN: '0', MODEL_LADDER_BAND: '0' } })
   } catch (error) {
     result = error
     Object.assign(error, { phase, cwd })

@@ -194,3 +194,9 @@ End-to-end (`node tests/e2e/run.mjs [scenario ...]`, `--dry` plants and runs pyt
 - With no tests, the router wrote its own assert as verify -> only pre-existing checks allowed.
 - A vague task passed on green tests -> router may ask one question first.
 - Windows: spawning `claude` through a shell split the task on spaces ("asks" scenarios passed vacuously) -> spawn directly; check the question text.
+
+### Codex panel parity (1.8)
+
+Codex's SessionStart hook supplies explicit setup instructions for a persistent PTY watcher and desktop terminal visibility. The skill repeats setup as a fallback when invoked explicitly. The watcher is a terminal panel, not a Claude Code UI module; it cannot render above the Codex composer. Hook trust is managed by Codex and must not be bypassed. `autoRun` and `band` are independent project settings. Internal role processes inherit `MODEL_LADDER_ROLE` and turn off panel/autorun setup to prevent recursion.
+
+The live state stores task, input, role skills, retry state and the final result. The watcher renders the same phase lights and rounded reset countdowns as Claude, and accepts guard/threshold/handoff commands followed by Enter. Handoff never interrupts an active run. Both runtimes ship verification-skill generators and maintainers; Codex generates `.agents/skills/verify/` and can consume an existing Claude verification skill.

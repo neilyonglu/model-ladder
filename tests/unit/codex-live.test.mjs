@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { displayWidth, truncate, renderLive, visibleAgents } from '../../scripts/codex-live.mjs'
-import { configureGuard, parseArgs } from '../../scripts/watch.mjs'
+import { configureGuard, parseArgs, panelCommand } from '../../scripts/watch.mjs'
 
 test('truncation counts Chinese as two cells and preserves graphemes and single-line output', () => {
   assert.equal(displayWidth('整理 README'), 11)
@@ -55,5 +55,40 @@ test('watch flags preserve other configuration; every invalid threshold exits wi
     assert.throws(() => parseArgs(['--guard', 'yes']), /on or off/)
     assert.throws(() => parseArgs(['--threshold']), /requires/)
     assert.throws(() => configureGuard(root, { threshold: NaN }), /between/)
+  } finally { rmSync(root, { recursive: true, force: true }) }
+})
+
+test('panel shows phase lights, reset countdown and companion skills', () => {
+  const now = Date.now()
+  const agent = { phase: 'worker', model: 'luna', effort: 'low', task: 'fix', startedAt: new Date(now).toISOString(), endedAt: null }
+  const state = { agents: [agent], usage: { fiveHour: 15, fiveHourResetsAt: now / 1000 + 16440 }, skills: { worker: 'ponytail' } }
+  assert.match(renderLive(state, { now }), /🟢 model-ladder.*5h\/5h 15%/)
+  assert.match(renderLive(state, { now }), /with: worker ponytail/)
+  assert.match(renderLive({ ...state, agents: [{ ...agent, retry: true }] }), /🔴/)
+  assert.match(renderLive({ ...state, agents: [{ ...agent, phase: 'verify-command' }] }), /🔵/)
+})
+
+test('panel controls persist settings and hand off active and completed runs', () => {
+  const root = mkdtempSync(join(tmpdir(), 'ml-panel-'))
+  try {
+    mkdirSync(join(root, '.model-ladder'))
+    const state = { runId: 'codex-demo', task: '整理 README', input: { task: '整理 README', allowDirty: true }, agents: [{ phase: 'worker', model: 'luna', effort: 'low', endedAt: null }] }
+    writeFileSync(join(root, '.model-ladder/live.json'), JSON.stringify(state))
+    assert.match(panelCommand(root, 'g'), /off/)
+    assert.equal(configureGuard(root, {}).enabled, false)
+    assert.match(panelCommand(root, 't 75'), /75%/)
+    assert.equal(configureGuard(root, {}).threshold, 75)
+    assert.throws(() => panelCommand(root, 't 101'), /threshold/)
+    panelCommand(root, 'h')
+    const handoff = () => readFileSync(join(root, '.model-ladder/HANDOFF.md'), 'utf8')
+    assert.match(handoff(), /still active/)
+    assert.match(handoff(), /整理 README/)
+    state.agents = []
+    state.result = { status: 'STOPPED', errorCode: 'USAGE_LIMIT', runId: state.runId, checkpointPath: '/checkpoint', worktreePath: '/worktree', attempts: [] }
+    writeFileSync(join(root, '.model-ladder/live.json'), JSON.stringify(state))
+    panelCommand(root, 'h')
+    assert.match(handoff(), /quota reset/)
+    assert.match(handoff(), /"resumeRun": "codex-demo"/)
+    assert.match(handoff(), /"allowDirty": true/)
   } finally { rmSync(root, { recursive: true, force: true }) }
 })

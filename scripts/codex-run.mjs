@@ -7,6 +7,7 @@ import { TEST_PATTERNS } from '../hooks/guard.mjs'
 import { legalMoves, pickMove, isCell } from './ladder-rules.mjs'
 import { readCodexUsage } from './codex-usage.mjs'
 import { atomicJson, renderLive } from './codex-live.mjs'
+import { writeHandoff } from './codex-handoff.mjs'
 import { codexExec, EnvironmentError, processRun, SCHEMAS, validate } from './codex-exec.mjs'
 import { git, snapshot, changed, protectedChange, makeWorktree, applyResult, removeOwned } from './codex-worktree.mjs'
 
@@ -20,6 +21,7 @@ export const DEFAULTS = {
   ],
   maxAttempts: 4, verify: null, protected: [], keepFailed: false, timeoutMs: 600000,
   usageGuard: { enabled: true, threshold: 90 },
+  autoRun: true, band: true, worker_skills: '', verifier_skills: '',
 }
 const EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']
 export function loadConfig(root) {
@@ -37,6 +39,8 @@ export function loadConfig(root) {
   if (!Array.isArray(config.protected) || config.protected.some((p) => typeof p !== 'string')) throw new Error('protected must be a list of globs')
   if (config.verify !== null && (typeof config.verify !== 'string' || !config.verify.trim())) throw new Error('verify must be a command or null')
   if (typeof config.keepFailed !== 'boolean') throw new Error('keepFailed must be boolean')
+  for (const key of ['autoRun', 'band']) if (typeof config[key] !== 'boolean') throw new Error(`${key} must be boolean`)
+  for (const key of ['worker_skills', 'verifier_skills']) if (typeof config[key] !== 'string') throw new Error(`${key} must be a comma-separated string`)
   const guard = config.usageGuard
   if (typeof guard?.enabled !== 'boolean' || typeof guard.threshold !== 'number' || !(guard.threshold >= 1 && guard.threshold <= 100)) throw new Error('usageGuard requires boolean enabled and threshold between 1 and 100')
   if (config.commit) throw new Error('Codex does not auto-commit. Commit the verified change separately.')
@@ -97,12 +101,12 @@ export async function runLadder(input, options = {}) {
   const publish = () => {
     if (!live) return
     live.updatedAt = new Date().toISOString()
-    live.usage = readCodexUsage(undefined, undefined, { details: true })
+    live.usage = readCodexUsage(undefined, undefined, { details: true, resets: true })
     atomicJson(join(root, '.model-ladder', 'live.json'), live)
     options.onProgress?.(renderLive(live, { width: options.columns ?? process.stderr.columns ?? 80, guard: liveGuard }))
   }
   const role = async (phase, cell, task, execute) => {
-    const agent = { phase, model: cell.model, effort: cell.effort, task, startedAt: new Date().toISOString(), endedAt: null, pass: null }
+    const agent = { retry: phase === 'worker' && attempts.some((a) => a.reason && !a.pass), phase, model: cell.model, effort: cell.effort, task, startedAt: new Date().toISOString(), endedAt: null, pass: null }
     live.agents.push(agent)
     try {
       publish()
@@ -129,7 +133,7 @@ export async function runLadder(input, options = {}) {
     marker = join(runs, 'run.json')
     try { writeFileSync(marker, JSON.stringify({ runtime: 'codex', runId, pid: process.pid, protected: ['.codex/model-ladder.json', '.claude/model-ladder.json', ...config.protected], tests: TEST_PATTERNS }), { flag: 'wx' }); ownsLock = true }
     catch (error) { if (error.code === 'EEXIST') return { status: 'STALE_RUN', message: 'Another Claude Code or Codex run is active, or its .model-ladder/run.json marker needs inspection.' }; throw error }
-    live = { runId, updatedAt: null, agents: [], usage: { fiveHour: null, sevenDay: null } }
+    live = { runId, task: input.task, input, skills: { worker: config.worker_skills, verifier: config.verifier_skills }, updatedAt: null, agents: [], usage: { fiveHour: null, sevenDay: null } }
     liveGuard = config.usageGuard
     publish()
     run = join(runs, runId)
@@ -158,6 +162,8 @@ export async function runLadder(input, options = {}) {
       if (percent !== null && percent >= liveGuard.threshold) throw Object.assign(new EnvironmentError(`Codex usage ${percent}% reached threshold ${liveGuard.threshold}%`), { code: 'USAGE_LIMIT' })
     }
     const ask = async (phase, cell, cwd, prompt, sandbox = 'read-only') => {
+      const skills = phase === 'worker' ? config.worker_skills : phase === 'verify' ? config.verifier_skills : ''
+      if (skills.trim()) prompt += `\nSKILLS\nBefore working, load these companion skills by name from the skills available in this session: ${skills.split(',').map((s) => s.trim()).filter(Boolean).join(', ')}. Follow their applicable instructions within this role's scope. If a required skill is unavailable, report that explicitly; never silently skip it. Do not invoke model-ladder recursively.`
       checkUsage()
       return role(phase, cell, input.task, async () => {
         const response = await codexExec({ phase, cell, cwd, run, prompt, sandbox, timeoutMs: config.timeoutMs, signal: options.signal, executable: options.executable })
@@ -169,7 +175,7 @@ export async function runLadder(input, options = {}) {
     const lowest = { model: config.tiers[0].model, effort: config.tiers[0].efforts[0] }
     let cell = checkpoint?.cell ?? (isCell(route, config.tiers) ? { model: route.model, effort: route.effort } : lowest)
     result.plan = { ...route, start: label(cell), verify: verify ?? verifySkill, acceptance }
-    if (route.question || !verify && !verifySkill && !acceptance.length) {
+    if (route.question || !route.readOnly && !verify && !verifySkill && !acceptance.length) {
       result.status = 'NEEDS_INPUT'
       result.message = route.question ?? 'No existing verification command was found. Supply explicit acceptance criteria in acceptance, or configure verify in .codex/model-ladder.json.'
       return result
@@ -266,17 +272,18 @@ export async function runLadder(input, options = {}) {
     result.status = stops(error) ? 'STOPPED' : 'ERROR'
     result.message = [error.message, error.stderr].filter(Boolean).join('\n').slice(-4000)
     if (error.code) result.errorCode = error.code
-    if (error.code === 'USAGE_LIMIT' && run) {
-      result.handoffPath = join(run, 'HANDOFF.md')
-      const resume = result.checkpointPath ? { ...input, resumeRun: result.runId } : input
-      writeFileSync(result.handoffPath, `# model-ladder handoff\n\n## Task\n${input.task}\n\n## Stopped\n${error.message}\n\n## Attempts\n${attempts.map((a, i) => `${i + 1}. ${a.cell}: ${a.pass ? 'PASS' : 'FAIL'} ${a.reason}`).join('\n') || 'none'}\n\n## Paths\n- worktreePath: ${result.worktreePath ?? 'none'}\n- checkpointPath: ${result.checkpointPath ?? 'none'}\n\n## Resume\nAfter the quota resets, run again with this input JSON${result.checkpointPath ? ' (adds resumeRun)' : ' (no checkpoint, so this restarts the task)'}:\n\n\`\`\`json\n${JSON.stringify(resume, null, 2)}\n\`\`\`\n`)
-    }
     return result
   } finally {
     if (ownsLock) {
       try {
         result.cleanup = removeOwned(root, owned, keep)
         if (run) {
+          live.result = result
+          if (result.errorCode === 'USAGE_LIMIT') {
+            result.handoffPath = join(root, '.model-ladder', 'HANDOFF.md')
+            publish()
+            writeHandoff(root)
+          }
           writeFileSync(join(run, 'result.json'), JSON.stringify(result, null, 2))
           appendFileSync(join(root, '.model-ladder', 'history.jsonl'), `${JSON.stringify({ date: new Date().toISOString(), runtime: 'codex', task: input.task, ...result })}\n`)
         }

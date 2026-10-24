@@ -53,7 +53,7 @@ try {
     const frames = output.split('▴').slice(1)
     assert.ok(frames.some((frame) => /worker:/.test(frame) && /  1s\s+worker:/.test(frame)))
     assert.ok(frames.some((frame) => /✓ 2s/.test(frame)))
-    assert.match(frames.at(-1), /5h 15% · 7d 44% · idle/)
+    assert.match(frames.at(-1), /1h\/5h 15% · 1h\/7d 44% · idle/)
     assert.doesNotMatch(frames.at(-1), /cheap\/low|node\//)
   }
   console.log('PASS: VERIFIED; running seconds updated, completed time froze, all completed rows disappeared after 10s.')

@@ -1,6 +1,7 @@
 import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { randomUUID } from 'node:crypto'
+import { roundSpan } from '../hooks/band/remaining.mjs'
 
 export function atomicJson(path, value) {
   mkdirSync(dirname(path), { recursive: true })
@@ -50,7 +51,13 @@ export function renderLive(state, { width = 80, now = Date.now(), guard = { enab
   const agents = visibleAgents(state?.agents, now)
   const idle = !(state?.agents ?? []).some((agent) => agent.endedAt === null)
   const percent = (value) => Number.isFinite(value) ? `${value}%` : '?'
-  const lines = [`▴ model-ladder ── 5h ${percent(state?.usage?.fiveHour)} · 7d ${percent(state?.usage?.sevenDay)}${idle ? ' · idle' : ''}`]
+  const active = agents.filter((a) => a.endedAt === null)
+  const dot = active.some((a) => a.phase.startsWith('verify')) ? '🔵 ' : active.some((a) => a.retry) ? '🔴 ' : active.length ? '🟢 ' : ''
+  const window = (name, label) => {
+    const ms = state?.usage?.[`${name}ResetsAt`] * 1000 - now
+    return `${ms > 0 ? roundSpan(ms) + '/' : ''}${label} ${percent(state?.usage?.[name])}`
+  }
+  const lines = [`▴ ${dot}model-ladder ── ${window('fiveHour', '5h')} · ${window('sevenDay', '7d')}${idle ? ' · idle' : ''}`]
   const modelWidth = Math.min(32, Math.max(12, ...agents.map((a) => displayWidth(`${a.model}/${a.effort}`))))
   lines.push(`${pad('model/effort', modelWidth)}  ${pad('time', 9)}  task`)
   for (const agent of agents) {
@@ -59,6 +66,8 @@ export function renderLive(state, { width = 80, now = Date.now(), guard = { enab
     const prefix = `${pad(`${agent.model}/${agent.effort}`, modelWidth)}  ${pad(time, 9)}  `
     lines.push(prefix + truncate(`${agent.phase}: ${agent.task}`, Math.max(0, width - displayWidth(prefix))))
   }
+  const withs = Object.entries(state?.skills ?? {}).filter(([, skills]) => skills?.trim()).map(([role, skills]) => `${role} ${skills}`)
+  if (withs.length) lines.push(`with: ${withs.join(' · ')}`)
   lines.push(`[usage guard: ${guard.enabled ? 'on' : 'off'}]${guard.enabled ? `  threshold ${guard.threshold}%` : ''}`)
   return lines.map((line) => truncate(line, width)).join('\n')
 }

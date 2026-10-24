@@ -1,9 +1,11 @@
 # Third-party notices
 
-`skills/create-verification-skill/` and `skills/maintain-verification-skill/` come from
+`skills/create-verification-skill/`, `skills/maintain-verification-skill/`, and their
+Codex adaptations under `codex-skills/` come from
 [pstack-claude](https://github.com/michael-denyer/pstack-claude)
 (upstream: cursor/plugins/pstack), with small edits: the Codex/Copilot/Muse platform-mapping lines
-are removed and `/maintain-verification-skill` is renamed `/model-ladder:maintain-verification-skill`.
+are replaced by native Codex skill paths in the Codex adaptations; in the Claude versions they
+are removed, and `/maintain-verification-skill` is renamed `/model-ladder:maintain-verification-skill`.
 
 MIT License
 
