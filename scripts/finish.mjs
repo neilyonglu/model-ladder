@@ -94,7 +94,26 @@ After the usage limit resets, run \`/model-ladder:run ${task}\` again.${worktree
 `
 }
 
+// Every status workflows/ladder.js returns.
+const STATUSES = ['VERIFIED', 'FAILED', 'STOPPED', 'DIRECT', 'USAGE_LIMIT', 'NEEDS_INPUT']
+
+// Runs before anything is cleaned: a wrong shape must never cost a verified worktree.
+function validate(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('input must be a JSON object {task, result} | {task, error} | {task, aborted}')
+  const { task, result, error, aborted } = input
+  if (typeof task !== 'string' || !task) throw new Error('task missing — input must be {task, result} | {task, error} | {task, aborted}')
+  if (result === undefined) {
+    if (aborted === undefined && error === undefined) throw new Error('input needs one of result, error or aborted')
+    return
+  }
+  if (!result || typeof result !== 'object') throw new Error("result must be the workflow's result object")
+  if (result.status === undefined) throw new Error("result.status missing — pass the workflow's result field, not the whole output")
+  if (!STATUSES.includes(result.status)) throw new Error(`result.status "${result.status}" is unknown — expected one of ${STATUSES.join(', ')}`)
+  if (result.status === 'VERIFIED' && !result.winner) throw new Error('result.status is VERIFIED but result.winner is missing')
+}
+
 function main(input) {
+  validate(input)
   const root = repoRoot()
   const run = runDir(root)
   const statePath = join(run, 'state.json')

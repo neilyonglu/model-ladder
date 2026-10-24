@@ -232,7 +232,7 @@ test('no verify returns for user input, with the router proposal', async () => {
   assert.equal(out.status, 'NEEDS_INPUT')
   assert.equal(out.plan.needsAcceptance, true)
   assert.deepEqual(out.plan.acceptance, ['prints NT$ 1,234'])
-  assert.match(out.plan.acceptanceMessage, /\*\*Acceptance criteria \(proposed\)\*\*\n1\. prints NT\$ 1,234$/)
+  assert.match(out.plan.acceptanceMessage, /\*\*Acceptance criteria \(proposed\)\*\*\n1\. prints NT\$ 1,234\n\nTip: run \/model-ladder:create-verification-skill to generate \.claude\/skills\/verify\/;/)
   assert.equal(out.plan.acceptanceQuestion, 'Run with these criteria?')
 })
 

@@ -199,7 +199,7 @@ Also return:
     // Without a verify step the user, not the router, decides what done means.
     needsAcceptance: !verify && !args.acceptance?.length,
     // Built here, not by the skill: the question box shows one flat paragraph, so the list goes in a message.
-    acceptanceMessage: `**Ladder start:** ${label(start)} — ${startReason}\n\n**Acceptance criteria (proposed)**\n${acceptance.map((a, i) => `${i + 1}. ${a}`).join('\n')}`,
+    acceptanceMessage: `**Ladder start:** ${label(start)} — ${startReason}\n\n**Acceptance criteria (proposed)**\n${acceptance.map((a, i) => `${i + 1}. ${a}`).join('\n')}\n\nTip: run /model-ladder:create-verification-skill to generate .claude/skills/verify/; the ladder will use it automatically next time.`,
     acceptanceQuestion: 'Run with these criteria?',
     routeTokens: tokens,
   }

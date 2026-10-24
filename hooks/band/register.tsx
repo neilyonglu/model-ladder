@@ -2,6 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, Timer } from 'claude-code'
 
 import type { Row } from './types'
+import { roundSpan } from './remaining.mjs'
 
 const runId = atom({ plugin: 'model-ladder', key: 'runId' } as const, null)
 const rows = atom({ plugin: 'model-ladder', key: 'rows' } as const, [])
@@ -40,10 +41,10 @@ const clip = (text: string, cols: number) => {
   return out
 }
 const WINDOW: Record<string, string> = { five_hour: '5h', seven_day: '7d' }
-// Time until a window resets: "54m", "2h" or "3d"; empty when unknown or already past.
+// Time until a window resets, rounded to its largest unit: "54m", "2h" or "3d"; empty when unknown or already past.
 const remaining = (resetsAt: string | null | undefined, now: number) => {
   const ms = Date.parse(resetsAt ?? '') - now
-  return ms > 0 ? span(ms) : ''
+  return ms > 0 ? roundSpan(ms) : ''
 }
 
 // Same shape as scripts/finish.mjs handoff(), for a run that is still going or just ended.

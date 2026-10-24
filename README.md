@@ -79,7 +79,7 @@ Changed   shop/messages.py
 Applied   to the working tree (not committed)
 ```
 
-Verify is your test command and each table row is one attempt. It asks first when you have uncommitted changes, the task is vague, no tests exist, or `CLAUDE_CODE_EFFORT_LEVEL` / `CLAUDE_CODE_SUBAGENT_MODEL_FORCE` is set. Every run is logged to `.model-ladder/history.jsonl`.
+Verify is your test command and each table row is one attempt. It asks first when you have uncommitted changes, the task is vague, no tests exist, or `CLAUDE_CODE_EFFORT_LEVEL` / `CLAUDE_CODE_SUBAGENT_MODEL_FORCE` is set. Every run is logged to `.model-ladder/history.jsonl`. No verify step yet? `/model-ladder:create-verification-skill` generates `.claude/skills/verify/` and `/model-ladder:maintain-verification-skill` keeps it current (both adapted from [pstack](https://github.com/michael-denyer/pstack-claude), MIT, see NOTICE.md).
 
 Codex runner directly: `node scripts/codex-run.mjs "<task>"`; only `VERIFIED` exits 0. Watch it live with `node scripts/watch.mjs [--cwd <repo>]`. Codex uses router `gpt-5.6-terra/low`, verifier `gpt-6-luna/low` and tiers Luna, Terra, Sol (replace with models your account has); it has no `DIRECT` shortcut or `commit` option.
 
