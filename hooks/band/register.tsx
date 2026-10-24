@@ -66,6 +66,8 @@ export const register: Register = (on, options) => {
   let draft: string | null = null
   // Saves the typed threshold once typing pauses for a second; Enter saves at once.
   let settle: Timer | null = null
+  // Bumped on Enter: the Input clears itself on submit, and a new key remounts it showing the value again.
+  let submits = 0
   // Agents already told about; a long run is only reported, never stopped.
   const warned = new Set<string>()
   // The task last seen in each workflow run, for agents whose prompt has no TASK line.
@@ -234,7 +236,7 @@ export const register: Register = (on, options) => {
           {enabled && 'Input' in els && <Text dimColor>  threshold </Text>}
           {enabled && 'Input' in els && (
             <Box flexShrink={0} width={e.surface === 'terminal' ? 6 : 10}>
-              <els.Input key="threshold" value={String(threshold)}
+              <els.Input key={`threshold-${submits}`} value={String(threshold)}
                 onInput={(value) => {
                   draft = value
                   settle?.cancel()
@@ -244,7 +246,7 @@ export const register: Register = (on, options) => {
                     if (typed && typed !== String(threshold)) void save(typed)
                   })
                 }}
-                onSubmit={(value) => { settle?.cancel(); settle = null; return save(value) }} />
+                onSubmit={async (value) => { settle?.cancel(); settle = null; await save(value); submits++; $.ui.invalidate('ui.render') }} />
             </Box>
           )}
           {enabled && 'Input' in els && <Text dimColor> % </Text>}
