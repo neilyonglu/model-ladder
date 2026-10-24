@@ -186,8 +186,8 @@ export const register: Register = (on, options) => {
       return editConfig($, (c) => ({ ...c, usageGuard: { enabled: true, threshold: n } }))
     }
     // Fixed-width columns line up in any font, unlike padding with spaces.
-    // shortcut: outside the terminal the columns draw wider than bodyColumns says, so the task is capped at 22 cells; measure it there if the band gets wider.
-    const taskCols = Math.max(10, Math.min((e.props.bodyColumns ?? 60) - 29 - 2, e.surface === 'terminal' ? Infinity : 22))
+    // Terminal cuts the task itself; elsewhere the full task goes to the row and truncate-end adds the ellipsis at the band's edge.
+    const taskCols = Math.max(10, (e.props.bodyColumns ?? 60) - 29 - 2)
     const row = (key: string, model: string, time: string, task: string, dim = false) => (
       <Box key={key} flexWrap="nowrap">
         <Box width={20} flexShrink={0}><Text dimColor={dim} wrap="truncate-end">{model}</Text></Box>
@@ -204,7 +204,7 @@ export const register: Register = (on, options) => {
         </Box>
         {withs.length > 0 && <Text dimColor>with: {withs.join(' · ')}</Text>}
         {shown.length > 0 && row('head', 'model/effort', 'time', 'task', true)}
-        {shown.map((r) => row(r.id, r.cell, elapsed(r), clip(r.task, taskCols)))}
+        {shown.map((r) => row(r.id, r.cell, elapsed(r), e.surface === 'terminal' ? clip(r.task, taskCols) : r.task))}
         <Box>
           <Button key="guard" plain label={`usage guard: ${enabled ? 'on' : 'off'}`}
             onPress={() => editConfig($, (c) => ({ ...c, usageGuard: { enabled: !enabled, threshold } }))} />
