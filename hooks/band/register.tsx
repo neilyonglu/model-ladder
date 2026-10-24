@@ -70,6 +70,8 @@ export const register: Register = (on, options) => {
   const warned = new Set<string>()
   // The task last seen in each workflow run, for agents whose prompt has no TASK line.
   const tasks = new Map<string, string>()
+  // Workflow runs whose verifier has run; a worker spawned later in the same run is a redispatch.
+  const verified = new Set<string>()
 
   // Records the subscription usage where preflight and the verifier read it, so the usage guard needs no statusline.
   // It runs with the band hidden too: the guard depends on it, not on the drawing.
@@ -97,18 +99,25 @@ export const register: Register = (on, options) => {
     if ((await read($, runId)) !== e.workflow.runId) {
       await update($, runId, () => e.workflow!.runId)
       await update($, rows, () => [])
+      verified.clear()
     }
     const hasTask = /TASK[^\n]*\n\s*[^\n]+/.test(e.prompt)
     if (hasTask) tasks.set(e.workflow.runId, taskOf(e.prompt, ''))
     const task = hasTask ? taskOf(e.prompt, '') : (tasks.get(e.workflow.runId) ?? e.description.trim())
     // Worker rows show just the task; the others say what they do with it.
     const isWorker = /^model-ladder:(worker|test-writer)$/.test(e.subagentType)
-    const role = e.description.replace(/\s*\S+\/\S+$/, '')
+    const what = e.description.replace(/\s*\S+\/\S+$/, '')
     const effort = e.description.match(/\S+\/(\S+)/)?.[1]
+    const role = e.subagentType.slice('model-ladder:'.length) as Row['role']
+    // shortcut: the turn.complete event type is not available here, so FAIL is inferred from "a worker spawns after a verifier in the same run"; this assumes the ladder only redispatches a worker after a FAIL, upgrade to the verifier's actual result once turn.complete exposes its output.
+    const redo = isWorker && verified.has(e.workflow.runId)
+    if (role === 'verifier') verified.add(e.workflow.runId)
     const row: Row = {
+      role,
+      redo,
       id: result.agentId,
       cell: `${modelName(result.model)}${effort ? `/${effort}` : ''}`,
-      task: isWorker ? task : `${role}: ${task}`,
+      task: isWorker ? task : `${what}: ${task}`,
       status: 'running',
       startedAt: await $.clock.now(),
       ms: null,
@@ -158,11 +167,13 @@ export const register: Register = (on, options) => {
     const folded = await read($, isFolded)
     const fold = <Button key="fold" plain dimColor label={folded ? '▾' : '▴'} onPress={() => update($, isFolded, (v) => !v)} />
     const last = running.at(-1)
+    const dot = last && <Text>{' ' + (last.role === 'verifier' ? '🔵' : last.redo ? '🔴' : '🟢')}</Text>
 
     if (folded) {
       return (
         <Box>
           {fold}
+          {dot}
           <Text bold> model-ladder </Text>
           <Text dimColor>── {usage || 'usage unknown'}{last ? ' · ' : ''}</Text>
           {last && <Text>{last.cell} · {elapsed(last)} · {fit(last.task, 30).trim()}</Text>}
@@ -210,6 +221,7 @@ export const register: Register = (on, options) => {
       <Box flexDirection="column">
         <Box>
           {fold}
+          {dot}
           <Text bold> model-ladder </Text>
           <Text dimColor>── {usage || 'usage unknown'}{running.length ? '' : ' · idle'}</Text>
         </Box>

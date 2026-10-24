@@ -1,4 +1,6 @@
 export type Row = {
+  role: 'worker' | 'test-writer' | 'router' | 'verifier'
+  redo: boolean
   id: string
   cell: string
   task: string
