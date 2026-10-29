@@ -1,6 +1,6 @@
-import '../helpers/isolate-home.mjs'
+import { freshUserConfig } from '../helpers/isolate-home.mjs'
 import assert from 'node:assert/strict'
-import { execFileSync, spawnSync } from 'node:child_process'
+import { execFileSync, spawn, spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -9,6 +9,7 @@ import { test, after } from 'node:test'
 import { runLadder, loadConfig, discoverVerify, readInput } from '../../scripts/codex-run.mjs'
 import { SCHEMAS, validate, environmentFailure, usageLimitFailure } from '../../scripts/codex-exec.mjs'
 import { artifactDir, pruneRuns } from '../../scripts/common.mjs'
+import { activeRuns, registerRun, unregisterRun } from '../../scripts/usage-guard.mjs'
 
 const dirs = [], repos = []
 // The usage guard is on by default: point it at an empty Codex home so this machine's real usage never decides a test.
@@ -402,6 +403,75 @@ test('usageGuard disabled ignores high usage', async () => {
   } finally { process.env.CODEX_HOME = NO_USAGE }
 })
 
+// Another ladder runner on this machine, as the machine-wide registry records it: a live process with a repo.
+function runningLadder(otherRoot) {
+  const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' })
+  const exited = new Promise((resolve) => child.once('exit', () => resolve(true)))
+  write(otherRoot, '.model-ladder/live.json', JSON.stringify({ runId: 'codex-other', task: 'Other repo task', input: { task: 'Other repo task' }, agents: [{ phase: 'worker', model: 'cheap', effort: 'low', startedAt: new Date().toISOString(), endedAt: null }] }))
+  registerRun({ runId: 'codex-other', pid: child.pid, root: otherRoot, runtime: 'codex' })
+  return { child, exited }
+}
+test('usage over the global usageGuard threshold mid-agent force-stops the Codex child and other ladder runs and writes HANDOFF.md', async () => {
+  const dir = fixture({ delay: 20000 })
+  const otherRoot = mkdtempSync(join(tmpdir(), 'ml-other-'))
+  dirs.push(otherRoot)
+  const other = runningLadder(otherRoot)
+  // Personal (global) setting only: the fixture's project file sets no usageGuard.
+  const userConfig = freshUserConfig()
+  write(join(userConfig, '..'), 'model-ladder.json', JSON.stringify({ usageGuard: { enabled: true, threshold: 50 } }))
+  const home = fakeUsage(10)
+  process.env.CODEX_HOME = home
+  let workerStarted
+  // Usage rises once the worker's fake Codex child is working (it then sleeps 20s).
+  const rise = setInterval(() => {
+    if (!existsSync(join(dir, '.model-ladder/fake-calls.jsonl')) || !calls(dir).some((c) => c.phase === 'worker')) return
+    clearInterval(rise)
+    workerStarted = Date.now()
+    write(home, 'sessions/s2.jsonl', JSON.stringify({ payload: { rate_limits: { primary: { used_percent: 60, resets_at: Math.floor(Date.now() / 1000) + 3600 } } } }) + '\n')
+  }, 100)
+  try {
+    const result = await run(dir, {}, { usagePollMs: 100 })
+    const elapsed = Date.now() - workerStarted
+    assert.equal(result.status, 'STOPPED', JSON.stringify(result))
+    assert.equal(result.errorCode, 'USAGE_LIMIT')
+    assert.match(result.message, /60%.*50%/)
+    assert.ok(elapsed < 15000, `stopped mid-agent, not after it (${elapsed}ms)`)
+    assert.deepEqual(calls(dir).map((c) => c.phase), ['route', 'worker'], 'no verifier, diagnosis or next worker')
+    const handoff = readFileSync(result.handoffPath, 'utf8')
+    assert.equal(read(dir, '.model-ladder/HANDOFF.md'), handoff)
+    assert.match(handoff, /Fix greeting typo/)
+    assert.match(handoff, /Wait for the quota reset/)
+    const live = JSON.parse(read(dir, '.model-ladder/live.json'))
+    assert.ok(live.agents.every((a) => a.endedAt), 'no agent left running')
+    assert.equal(await Promise.race([other.exited, new Promise((resolve) => setTimeout(() => resolve(false), 5000))]), true, 'the other ladder run was killed')
+    const otherHandoff = read(otherRoot, '.model-ladder/HANDOFF.md')
+    assert.match(otherHandoff, /Other repo task/)
+    assert.match(otherHandoff, /Status: USAGE_LIMIT/)
+    assert.match(otherHandoff, /## Stopped\nForce-stopped by run codex-.*60% reached threshold 50%/)
+    assert.match(otherHandoff, /worker: cheap\/low \(killed mid-run\)/)
+    assert.deepEqual(activeRuns(), [], 'neither run is still registered')
+    git(dir, 'worktree', 'remove', '--force', result.worktreePath)
+    cleaned(dir)
+  } finally {
+    clearInterval(rise)
+    other.child.kill()
+    process.env.CODEX_HOME = NO_USAGE
+    freshUserConfig()
+  }
+})
+test('usage below the threshold never force-stops other runs', async () => {
+  const dir = fixture()
+  const otherRoot = mkdtempSync(join(tmpdir(), 'ml-other-'))
+  dirs.push(otherRoot)
+  const other = runningLadder(otherRoot)
+  try {
+    const result = await run(dir, {}, { usagePollMs: 50 })
+    assert.equal(result.status, 'VERIFIED', JSON.stringify(result))
+    assert.equal(other.child.exitCode, null)
+    assert.equal(existsSync(join(otherRoot, '.model-ladder/HANDOFF.md')), false)
+    assert.deepEqual(activeRuns().map((r) => r.runId), ['codex-other'], 'a finished run unregisters itself')
+  } finally { other.child.kill(); unregisterRun('codex-other') }
+})
 test('UTF-8 JSON files preserve Chinese including a PowerShell UTF-8 BOM', async () => {
   const dir = fixture()
   const file = join(dir, '.model-ladder', 'input.json')

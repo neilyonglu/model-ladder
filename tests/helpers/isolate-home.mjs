@@ -17,4 +17,6 @@ export function freshUserConfig() {
 freshUserConfig()
 process.env.CLAUDE_CONFIG_DIR = join(base, 'claude')
 process.env.CODEX_HOME = join(base, 'codex')
+// The machine-wide registry of running ladder runs: a usage-limit test must never stop a real run on this machine.
+process.env.MODEL_LADDER_ACTIVE_DIR = join(base, 'active')
 process.on('exit', () => rmSync(base, { recursive: true, force: true }))

@@ -13,6 +13,7 @@ import { canonical } from '../hooks/guard.mjs'
 import { git, print, repoRoot, runDir, samePath, tryGit, worktrees } from './common.mjs'
 import { readLocks, releaseLock, runFiles, withMutex } from './runs.mjs'
 import { updateNote } from './update-check.mjs'
+import { forceStopRuns } from './usage-guard.mjs'
 
 function apply(root, run, state, winner) {
   const wt = winner.worktreePath
@@ -229,6 +230,9 @@ function main(input) {
   if (result?.status === 'USAGE_LIMIT') {
     outcome.handoff = join(run, 'HANDOFF.md')
     writeFileSync(outcome.handoff, handoff(task, result, lastWorktree))
+    // The limit is shared: every other model-ladder runner on this machine stops now too, with its own HANDOFF.md.
+    const stopped = forceStopRuns({ reason: `Force-stopped: ${result.final?.reason ?? 'usage reached the usageGuard threshold'}` })
+    if (stopped.length) notes.push(`Also stopped (usage limit): ${stopped.join(', ')}`)
   }
 
   if (result?.status === 'DIRECT') {

@@ -177,13 +177,27 @@ const grid = (tiers) => tiers.map((t) => `- ${t.model}: ${t.efforts.join(', ')}`
 const bullets = (items) => items.map((i) => `  - ${i}`).join('\n')
 
 // agent() returns null when an agent dies and throws when it cannot produce valid structured
-// output. Either way this step failed; the ladder decides what happens next. Only a thrown error carries a
-// message; `limit` is set when that message says Claude's subscription limit is spent (see hardLimit).
+// output. Either way this step failed; the ladder decides what happens next. An agent stopped by Claude's
+// subscription limit can also come back with no report but with its last text instead (a string, or an object
+// with an error/message field, e.g. "You've hit your 5-hour limit"). `limit` is set when a thrown message or
+// that text says the limit is spent (see hardLimit); the ladder then stops and starts no other agent.
+function deadText(result) {
+  if (typeof result === 'string') return result
+  if (result && typeof result === 'object') return [result.error, result.message].filter((v) => typeof v === 'string').join('\n')
+  return ''
+}
+
 async function measured(prompt, opts) {
   const before = budget.spent()
   try {
     const result = await agent(prompt, opts)
-    return { result, error: result ? null : 'died before reporting', limit: null, tokens: budget.spent() - before }
+    if (result && typeof result === 'object' && !Array.isArray(result) && !deadText(result)) {
+      return { result, error: null, limit: null, tokens: budget.spent() - before }
+    }
+    const text = deadText(result).trim()
+    const limit = hardLimit(text)
+    const error = limit ? `stopped on the usage limit: ${text.slice(0, 200)}` : text ? `returned no report: ${text.slice(0, 200)}` : 'died before reporting'
+    return { result: null, error, limit, tokens: budget.spent() - before }
   } catch (e) {
     const message = String(e?.message ?? e)
     return { result: null, error: `failed: ${message.slice(0, 200)}`, limit: hardLimit(message), tokens: budget.spent() - before }

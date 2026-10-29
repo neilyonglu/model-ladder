@@ -1,11 +1,13 @@
 import '../helpers/isolate-home.mjs'
 import assert from 'node:assert/strict'
-import { spawnSync } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, test } from 'node:test'
 import { fileURLToPath } from 'node:url'
+import { writeHandoff } from '../../scripts/codex-handoff.mjs'
+import { activeRuns, registerRun, unregisterRun } from '../../scripts/usage-guard.mjs'
 
 const root = fileURLToPath(new URL('../../', import.meta.url))
 const read = (file) => readFileSync(join(root, file), 'utf8')
@@ -58,6 +60,72 @@ test('finish --handoff writes a template from the last history entry, and says s
   assert.match(text, /1\. sonnet\/low: FAIL still red/)
   assert.match(text, /To start the task again, run `\/model-ladder:run fix b`/)
   assert.doesNotMatch(text, /usage limit resets/)
+})
+
+// A live process registered as another model-ladder run on this machine (the registry is isolated per test process).
+function otherRun(otherRoot, runId) {
+  const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' })
+  const exited = new Promise((resolve) => child.once('exit', () => resolve(true)))
+  writeFileSync(join(otherRoot, '.model-ladder', 'live.json'), JSON.stringify({ runId, task: 'other task', input: { task: 'other task' }, agents: [{ phase: 'verify', model: 'luna', effort: 'low', startedAt: '2026-10-29T00:00:00.000Z', endedAt: null }] }))
+  registerRun({ runId, pid: child.pid, root: otherRoot, runtime: 'codex' })
+  return { child, exited }
+}
+const exitedWithin = (other, ms) => Promise.race([other.exited, new Promise((resolve) => setTimeout(() => resolve(false), ms))])
+
+test('finish on USAGE_LIMIT force-stops the other ladder runs on this machine and writes their HANDOFF.md', async () => {
+  const dir = repo()
+  const otherRoot = repo()
+  const other = otherRun(otherRoot, 'codex-busy')
+  try {
+    const result = {
+      status: 'USAGE_LIMIT', winner: null, tokens: 1,
+      plan: { goal: 'g', verify: 'pytest', allowTests: false, allowTestsReason: 'r', start: 'haiku/low', startReason: 'r' },
+      attempts: [{ cell: 'haiku/low', pass: false, reason: "worker stopped on the usage limit: You've hit your 5-hour limit", tokens: 1 }],
+      final: { reason: "The worker haiku/low hit Claude's subscription limit: You've hit your 5-hour limit", suggestion: 'later' },
+    }
+    const out = finish(dir, [], JSON.stringify({ task: 'fix b', result }))
+    assert.equal(out.status, 0, out.stdout + out.stderr)
+    assert.match(out.stdout, /Also stopped \(usage limit\): codex-busy/)
+    assert.equal(await exitedWithin(other, 5000), true, 'the other run was killed')
+    assert.match(readFileSync(join(dir, '.model-ladder', 'HANDOFF.md'), 'utf8'), /USAGE_LIMIT: The worker haiku\/low hit Claude's subscription limit/)
+    const theirs = readFileSync(join(otherRoot, '.model-ladder', 'HANDOFF.md'), 'utf8')
+    assert.match(theirs, /## Task\nother task\n/)
+    assert.match(theirs, /Status: USAGE_LIMIT/)
+    assert.match(theirs, /## Stopped\nForce-stopped: The worker haiku\/low hit Claude's subscription limit/)
+    assert.match(theirs, /- verify: luna\/low \(killed mid-run\)/)
+    assert.match(theirs, /Wait for the quota reset/)
+    assert.doesNotMatch(theirs, /The run is still active/)
+    assert.deepEqual(activeRuns(), [])
+  } finally { other.child.kill(); unregisterRun('codex-busy') }
+})
+
+test('finish on any other status leaves the other ladder runs running', async () => {
+  const dir = repo()
+  const otherRoot = repo()
+  const other = otherRun(otherRoot, 'codex-busy-2')
+  try {
+    const result = {
+      status: 'FAILED', winner: null, tokens: 1,
+      plan: { goal: 'g', verify: 'pytest', allowTests: false, allowTestsReason: 'r', start: 'haiku/low', startReason: 'r' },
+      attempts: [{ cell: 'haiku/low', pass: false, reason: 'tests fail', tokens: 1 }],
+      final: { reason: 'r', suggestion: 's' },
+    }
+    const out = finish(dir, [], JSON.stringify({ task: 'fix b', result }))
+    assert.equal(out.status, 0, out.stdout + out.stderr)
+    assert.equal(await exitedWithin(other, 500), false)
+    assert.equal(existsSync(join(otherRoot, '.model-ladder', 'HANDOFF.md')), false)
+    assert.deepEqual(activeRuns().map((r) => r.runId), ['codex-busy-2'])
+  } finally { other.child.kill(); unregisterRun('codex-busy-2') }
+})
+
+test('writeHandoff without a stop reason still reports a live run as running', () => {
+  const dir = repo()
+  writeFileSync(join(dir, '.model-ladder', 'live.json'), JSON.stringify({ runId: 'codex-x', task: 't', input: { task: 't' }, agents: [{ phase: 'worker', model: 'm', effort: 'low', endedAt: null }] }))
+  const text = readFileSync(writeHandoff(dir), 'utf8')
+  assert.match(text, /Status: RUNNING/)
+  assert.match(text, /## Running\n- worker: m\/low\n/)
+  assert.match(text, /The run is still active/)
+  assert.doesNotMatch(text, /## Stopped/)
 })
 
 test('handoff skill has valid frontmatter and the AI-written format', () => {

@@ -470,6 +470,45 @@ test('hard limit at routing: USAGE_LIMIT with no attempts instead of a crash', a
   assert.equal(out.plan.start, 'none')
 })
 
+const FIVE_HOUR = "You've hit your 5-hour limit · resets 8pm (Asia/Taipei)"
+
+test('hard limit without a report: a worker that comes back with the limit text is USAGE_LIMIT, not died before reporting', async () => {
+  for (const result of [FIVE_HOUR, { error: FIVE_HOUR }, { message: FIVE_HOUR }]) {
+    const { out, calls } = await runWith([{ label: 'worker', result }])
+    assert.equal(out.status, 'USAGE_LIMIT', JSON.stringify(result))
+    assert.equal(calls.length, 1, 'no verifier, diagnosis or next worker')
+    assert.ok(out.final.reason.includes(FIVE_HOUR), out.final.reason)
+    assert.match(out.final.reason, /resets 8pm \(Asia\/Taipei\)/)
+    assert.match(out.final.suggestion, /HANDOFF\.md/)
+    assert.doesNotMatch(out.attempts[0].reason, /died before reporting/)
+    assert.equal(out.attempts[0].action, null, 'no raise_effort')
+  }
+})
+
+test('hard limit without a report: a verifier or a diagnosis that comes back with the limit text stops the run', async () => {
+  const atVerify = await runWith([{ label: 'worker', result: done }, { label: 'verify', result: FIVE_HOUR }])
+  assert.equal(atVerify.out.status, 'USAGE_LIMIT')
+  assert.equal(atVerify.calls.length, 2)
+  assert.deepEqual(atVerify.out.attempts.map((a) => a.worktreePath), ['/wt'])
+  const atDiagnosis = await runWith([
+    { label: 'worker', result: done }, { label: 'verify', result: fail },
+    { label: 'diagnose', result: FIVE_HOUR },
+  ])
+  assert.equal(atDiagnosis.out.status, 'USAGE_LIMIT')
+  assert.equal(atDiagnosis.calls.length, 3, 'no next worker after the diagnosis hit the limit')
+  assert.notEqual(atDiagnosis.out.attempts[0].action, 'raise_effort')
+})
+
+test('a worker that comes back with other text instead of a report is a failed attempt that still escalates', async () => {
+  const { out } = await runWith([
+    { label: 'worker', result: 'I could not finish' },
+    { label: 'diagnose', result: diag('raise_effort', 'haiku', 'medium') },
+    { label: 'worker', result: done }, { label: 'verify', result: pass },
+  ])
+  assert.equal(out.status, 'VERIFIED')
+  assert.equal(out.attempts[0].reason, 'worker returned no report: I could not finish')
+})
+
 test('an ordinary agent failure is not a hard limit and still escalates', async () => {
   const { out } = await runWith([
     { label: 'worker', throws: 'structured output invalid' },

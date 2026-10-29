@@ -13,6 +13,7 @@ import { artifactDir, ensureGitExclude, pruneRuns } from './common.mjs'
 import { GUARD_DEFAULT } from '../hooks/config-layers.mjs'
 import { loadLayered } from './config.mjs'
 import { claimScope, clearStale, createLock, readLocks, releaseLock, withMutex } from './runs.mjs'
+import { forceStopRuns, registerRun, unregisterRun } from './usage-guard.mjs'
 import { git, snapshot, changed, protectedChange, makeWorktree, applyResult, removeOwned } from './codex-worktree.mjs'
 
 export const DEFAULTS = {
@@ -112,6 +113,13 @@ export async function runLadder(input, options = {}) {
   const owned = [], keep = [], attempts = [], usage = []
   const result = { status: 'ERROR', attempts, usage }
   let live, liveGuard
+  // Every Codex child and verify command runs under this signal. The caller's signal cancels it; so does the usage
+  // guard, mid-agent, without waiting for the current role to finish (usageStop then says why).
+  const controller = new AbortController()
+  const cancel = () => controller.abort()
+  if (options.signal?.aborted) cancel()
+  else options.signal?.addEventListener('abort', cancel, { once: true })
+  let usageStop = null, usagePoll = null
   const publish = () => {
     if (!live) return
     live.updatedAt = new Date().toISOString()
@@ -152,10 +160,28 @@ export async function runLadder(input, options = {}) {
     result.runId = runId
     createLock(root, { runId, runtime: 'codex', pid: process.pid, protected: ['.codex/model-ladder.json', '.claude/model-ladder.json', ...config.protected], tests: TEST_PATTERNS, ...(input.resumeRun && { resumeRun: input.resumeRun }) })
     ownsLock = true
+    // Machine-wide, so another run's usage guard can stop this one (scripts/usage-guard.mjs forceStopRuns).
+    registerRun({ runId, pid: process.pid, root, runtime: 'codex' })
     pruneRuns(root, { keepFailed: config.keepFailed })
     live = { runId, task: input.task, input, skills: { worker: config.worker_skills, verifier: config.verifier_skills }, updatedAt: null, agents: [], usage: { fiveHour: null, sevenDay: null } }
     liveGuard = config.usageGuard
     publish()
+    const checkUsage = () => {
+      if (usageStop) throw usageStop
+      // Watcher edits take effect at the next check: every role/command boundary and every poll below.
+      liveGuard = loadConfig(root).usageGuard
+      if (!liveGuard.enabled) return
+      const percent = readCodexUsage()
+      if (percent === null || percent < liveGuard.threshold) return
+      usageStop = Object.assign(new EnvironmentError(`Codex usage ${percent}% reached threshold ${liveGuard.threshold}%`), { code: 'USAGE_LIMIT' })
+      // Over the limit: stop everything now, not after the current agent. Other ladder runs on this machine first,
+      // then this run's own Codex child or verify command; the finally below writes this run's HANDOFF.md.
+      try { forceStopRuns({ exclude: runId, reason: `Force-stopped by run ${runId}: ${usageStop.message}` }) } catch {}
+      controller.abort()
+      throw usageStop
+    }
+    usagePoll = setInterval(() => { try { checkUsage() } catch {} }, options.usagePollMs ?? 2000)
+    usagePoll.unref?.()
     // Per-run artifacts go to the system temp dir; .model-ladder keeps only the lock, history, live state and handoff.
     const artifacts = artifactDir(root)
     run = join(artifacts, runId)
@@ -176,19 +202,12 @@ export async function runLadder(input, options = {}) {
       validate(checkpoint.route, SCHEMAS.route)
       checkpoint.tree = snapshot(sourceCwd, run, 'resume')
     }
-    const checkUsage = () => {
-      // Watcher edits take effect at the next role/command boundary.
-      liveGuard = loadConfig(root).usageGuard
-      if (!liveGuard.enabled) return
-      const percent = readCodexUsage()
-      if (percent !== null && percent >= liveGuard.threshold) throw Object.assign(new EnvironmentError(`Codex usage ${percent}% reached threshold ${liveGuard.threshold}%`), { code: 'USAGE_LIMIT' })
-    }
     const ask = async (phase, cell, cwd, prompt, sandbox = 'read-only') => {
       const skills = phase === 'worker' ? config.worker_skills : phase === 'verify' ? config.verifier_skills : ''
       if (skills.trim() && !skills.includes('${')) prompt += `\n\nSKILL INSTRUCTIONS\n${skills}\n\nInterpret these natural-language instructions in the context of your assigned task and role. Evaluate each condition first, then select only the applicable relevant skills, plugins, slash commands, MCP tools or other capabilities actually available in this session. Existing name lists are requests to use those capabilities where relevant. A name may be a skill, a plugin name or an MCP server name (tools named mcp__<server>__*); map it to the matching available capability. Locate and read selected skills' SKILL.md files using the supplied skill paths and follow them, and call plugin, slash-command and MCP tools directly, within this role's scope, permissions, protected paths and verification rules. Verifiers only check and report; they never fix code. If an applicable required capability cannot be found, report it explicitly as a blocker and list the available capabilities you checked; never invent names or claim to have used a capability you did not use. Never invoke model-ladder skills, workflows or runners recursively.`
       checkUsage()
       return role(phase, cell, input.task, async () => {
-        const response = await codexExec({ phase, cell, cwd, run, prompt, sandbox, timeoutMs: config.timeoutMs, signal: options.signal, executable: options.executable })
+        const response = await codexExec({ phase, cell, cwd, run, prompt, sandbox, timeoutMs: config.timeoutMs, signal: controller.signal, executable: options.executable })
         usage.push({ phase, cell: label(cell), turns: response.usage })
         return response.value
       })
@@ -246,7 +265,7 @@ Also return estimatedMinutes: an integer, your estimate of the wall-clock minute
           if (verify && !route.readOnly) {
             checkUsage()
             verdict = await role('verify-command', { model: 'node', effort: '—' }, verify, async () => {
-              const check = await processRun(verify, [], { cwd, shell: true, timeoutMs: config.timeoutMs, signal: options.signal })
+              const check = await processRun(verify, [], { cwd, shell: true, timeoutMs: config.timeoutMs, signal: controller.signal })
               return { pass: check.code === 0, reason: check.code === 0 ? 'Verification command passed' : `Verification exited ${check.code}`, output: (check.stdout + check.stderr).slice(-12000) }
             })
           }
@@ -258,7 +277,8 @@ Also return estimatedMinutes: an integer, your estimate of the wall-clock minute
           if (tampered) verdict = { pass: false, reason: `Modified protected file ${tampered} during verification`, output: '' }
           if (git(cwd, 'rev-parse', 'HEAD') !== baseCommit || changed(cwd, tree, after, baseTree).length) verdict = { pass: false, reason: 'Verification changed repository files', output: verdict?.output ?? '' }
         }
-      } catch (error) {
+      } catch (caught) {
+        const error = usageStop ?? caught
         if (stops(error)) {
           attempt.reason = error.message.slice(-4000)
           retain(cwd, number)
@@ -284,7 +304,8 @@ Also return estimatedMinutes: an integer, your estimate of the wall-clock minute
       let diagnosis
       try {
         diagnosis = await ask('diagnose', config.router, cwd, `Diagnose this failed model-ladder attempt. Read only.\nTASK\n${input.task}\nCELL\n${label(cell)}\nFAILURE\n${JSON.stringify(verdict)}\nWORKER\n${JSON.stringify(worker)}\nLEGAL NEXT CELLS\n${JSON.stringify(moves)}\nRaise effort or model when stronger reasoning can help. stop_environment for missing dependencies, invalid credentials, unavailable services or permissions. stop_unclear for ambiguous goals. For raise actions choose a legal cell. For stop actions use null model and effort. Give the next worker a short hint. Each retry starts from the original snapshot.`)
-      } catch (error) {
+      } catch (caught) {
+        const error = usageStop ?? caught
         if (stops(error)) { retain(cwd, number); throw error }
         diagnosis = { action: 'raise_effort', model: null, effort: null, reason: error.message, hint: '' }
       }
@@ -301,13 +322,17 @@ Also return estimatedMinutes: an integer, your estimate of the wall-clock minute
     result.status = 'FAILED'
     result.message = 'No verified attempt. Clarify the task, fix the environment, or adjust the configured ladder.'
     return result
-  } catch (error) {
+  } catch (caught) {
+    const error = usageStop ?? caught
     result.status = stops(error) ? 'STOPPED' : 'ERROR'
     result.message = [error.message, error.stderr].filter(Boolean).join('\n').slice(-4000)
     if (error.code) result.errorCode = error.code
     return result
   } finally {
+    clearInterval(usagePoll)
+    options.signal?.removeEventListener('abort', cancel)
     if (ownsLock) {
+      unregisterRun(result.runId)
       try {
         result.cleanup = removeOwned(root, owned, keep)
         if (run) {
