@@ -37,7 +37,7 @@ export function makeWorktree(root, run, number, baseCommit, baseTree) {
 }
 // Concurrent runs apply one at a time (the 'apply' mutex). A patch that no longer applies, for example
 // because another run changed the same lines, is a CONFLICT that keeps the patch.
-export function applyResult(root, run, baseTree, resultTree, baseCommit) {
+export function applyResult(root, run, baseTree, resultTree, baseCommit, { commit = false, goal = 'verified change' } = {}) {
   const files = changed(root, baseTree, resultTree)
   if (!files.length) return { applied: false, files, note: 'No file changes' }
   const patch = join(run, 'result.patch')
@@ -46,9 +46,26 @@ export function applyResult(root, run, baseTree, resultTree, baseCommit) {
     return withMutex(root, 'apply', () => {
       if (git(root, 'rev-parse', 'HEAD') !== baseCommit) throw new Error('Original checkout changed commits')
       git(root, 'apply', '--check', patch)
+      const literalFiles = files.map((file) => `:(literal)${file}`)
+      const canCommit = commit && !git(root, 'diff', '--name-only', baseCommit, baseTree, '--', ...literalFiles) &&
+        !git(root, 'diff', '--cached', '--name-only', baseCommit, '--', ...literalFiles)
       git(root, 'apply', patch)
       rmSync(patch)
-      return { applied: true, files }
+      const outcome = { applied: true, files }
+      if (commit) {
+        // Never include earlier user edits or concurrent edits in a verified commit.
+        try {
+          const current = snapshot(root, run, 'before-commit')
+          if (!canCommit || git(root, 'diff', '--name-only', resultTree, current, '--', ...literalFiles)) {
+            outcome.note = 'Applied without committing: affected files contain pre-existing or concurrent changes.'
+          } else {
+            git(root, 'add', '--', ...literalFiles)
+            git(root, 'commit', '--only', '-q', '-m', `model-ladder: ${goal}`, '--', ...literalFiles)
+            outcome.committed = git(root, 'rev-parse', '--short', 'HEAD')
+          }
+        } catch (error) { outcome.note = `Applied without committing: ${String(error.stderr ?? error.message).slice(-1000)}` }
+      }
+      return outcome
     })
   } catch { return { applied: false, files, patch, note: 'Patch conflict. Kept the verified worktree and patch.' } }
 }

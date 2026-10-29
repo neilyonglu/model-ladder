@@ -4,7 +4,8 @@ import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { isDeepStrictEqual } from 'node:util'
 import { TEST_PATTERNS } from '../hooks/guard.mjs'
-import { legalMoves, pickMove, isCell } from './ladder-rules.mjs'
+import { legalMoves, pickMove, isCell, isDirect, splitSuggestion } from './ladder-rules.mjs'
+export { splitSuggestion } from './ladder-rules.mjs'
 import { readCodexUsage } from './codex-usage.mjs'
 import { atomicJson, renderLive } from './codex-live.mjs'
 import { writeHandoff } from './codex-handoff.mjs'
@@ -26,7 +27,7 @@ export const DEFAULTS = {
   ],
   maxAttempts: 4, verify: null, protected: [], keepFailed: false, timeoutMs: 600000,
   usageGuard: GUARD_DEFAULT,
-  split_minutes: 20, autoRun: true, band: true, worker_skills: '', verifier_skills: '',
+  split_minutes: 20, direct_threshold: 30, commit: false, autoRun: true, band: true, worker_skills: '', verifier_skills: '',
 }
 const EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']
 // defaults -> ~/.codex/model-ladder.json (personal, e.g. usageGuard) -> .codex/model-ladder.json (project).
@@ -43,13 +44,14 @@ export function loadConfig(root) {
   if (!Array.isArray(config.protected) || config.protected.some((p) => typeof p !== 'string')) throw new Error('protected must be a list of globs')
   if (config.verify !== null && (typeof config.verify !== 'string' || !config.verify.trim())) throw new Error('verify must be a command or null')
   if (typeof config.keepFailed !== 'boolean') throw new Error('keepFailed must be boolean')
-  for (const key of ['autoRun', 'band']) if (typeof config[key] !== 'boolean') throw new Error(`${key} must be boolean`)
+  for (const key of ['autoRun', 'band', 'commit']) if (typeof config[key] !== 'boolean') throw new Error(`${key} must be boolean`)
+  const dt = config.direct_threshold
+  if (dt !== 'off' && !(typeof dt === 'number' && dt >= 1 && dt <= 100)) throw new Error('direct_threshold must be a number between 1 and 100, or "off"')
   for (const key of ['worker_skills', 'verifier_skills']) if (typeof config[key] !== 'string') throw new Error(`${key} must be a string of skill instructions`)
   const sm = config.split_minutes
-  if (sm !== 'off' && !(typeof sm === 'number' && sm > 0)) throw new Error('split_minutes must be a number of minutes greater than 0, or "off"')
+  if (sm !== 'off' && !(typeof sm === 'number' && Number.isFinite(sm) && sm > 0)) throw new Error('split_minutes must be a number of minutes greater than 0, or "off"')
   const guard = config.usageGuard
   if (typeof guard?.enabled !== 'boolean' || typeof guard.threshold !== 'number' || !(guard.threshold >= 1 && guard.threshold <= 100)) throw new Error('usageGuard requires boolean enabled and threshold between 1 and 100')
-  if (config.commit) throw new Error('Codex does not auto-commit. Commit the verified change separately.')
   return config
 }
 export function discoverVerify(root) {
@@ -92,12 +94,6 @@ function changedNpmScripts(cwd, baseTree, tree, verify) {
   }
   return null
 }
-// The router's wall-clock estimate against split_minutes; equal to the limit is fine. Same rule as splitSuggestion in workflows/ladder.js.
-export function splitSuggestion(estimatedMinutes, split, limit = DEFAULTS.split_minutes) {
-  if (!(typeof limit === 'number' && limit > 0)) return null
-  if (!(typeof estimatedMinutes === 'number' && estimatedMinutes > limit) || !Array.isArray(split) || !split.length) return null
-  return { estimatedMinutes, limit, parts: split }
-}
 // The configuration a checkpoint must match to resume. usageGuard is the person's live switch, not part of the work.
 const settled = ({ usageGuard, ...rest } = {}) => rest
 const stops = (error) => error instanceof EnvironmentError || ['TIMEOUT', 'CANCELLED', 'USAGE_LIMIT'].includes(error.code)
@@ -110,6 +106,11 @@ export async function runLadder(input, options = {}) {
   if (input.resumeRun !== undefined && (typeof input.resumeRun !== 'string' || !/^codex-[0-9a-f-]{36}$/.test(input.resumeRun))) return { status: 'ERROR', message: 'resumeRun must be a Codex run ID.' }
   if (input.clearStale !== undefined && typeof input.clearStale !== 'boolean' && (typeof input.clearStale !== 'string' || !input.clearStale)) return { status: 'ERROR', message: 'clearStale must be true or a run ID.' }
   let root, run, ownsLock = false
+  if (input.directRun !== undefined && (typeof input.directRun !== 'string' || !/^codex-[0-9a-f-]{36}$/.test(input.directRun))) return { status: 'ERROR', message: 'directRun must be a Codex run ID.' }
+  if (input.directRun && input.resumeRun) return { status: 'ERROR', message: 'Use either directRun or resumeRun.' }
+  if (input.directRun && (typeof input.directSummary !== 'string' || !input.directSummary.trim())) return { status: 'ERROR', message: 'directRun requires directSummary describing the caller draft and checks.' }
+  for (const key of ['forceLadder', 'acceptSplit']) if (input[key] !== undefined && typeof input[key] !== 'boolean') return { status: 'ERROR', message: `${key} must be boolean.` }
+  for (const key of ['contextTokens', 'contextWindow']) if (input[key] !== undefined && (!Number.isFinite(input[key]) || input[key] < (key === 'contextWindow' ? 1 : 0))) return { status: 'ERROR', message: `${key} must be a finite ${key === 'contextWindow' ? 'positive' : 'nonnegative'} number.` }
   const owned = [], keep = [], attempts = [], usage = []
   const result = { status: 'ERROR', attempts, usage }
   let live, liveGuard
@@ -124,6 +125,7 @@ export async function runLadder(input, options = {}) {
     if (!live) return
     live.updatedAt = new Date().toISOString()
     live.usage = readCodexUsage(undefined, undefined, { details: true, resets: true })
+    if (run) atomicJson(join(run, 'live.json'), live)
     atomicJson(join(root, '.model-ladder', 'live.json'), live)
     options.onProgress?.(renderLive(live, { width: options.columns ?? process.stderr.columns ?? 80, guard: liveGuard }))
   }
@@ -158,7 +160,7 @@ export async function runLadder(input, options = {}) {
     if (stale.length) return { status: 'STALE_RUN', message: `A model-ladder run lock looks stale (its process is gone, it is unreadable, or it is an older version's run.json): ${stale.map((lock) => lock.path).join(', ')}. Rerun with clearStale true only if no such run is still running.`, locks: stale.map((lock) => ({ runId: lock.runId, runtime: lock.runtime ?? 'unknown', lock: lock.path })) }
     const runId = `codex-${randomUUID()}`
     result.runId = runId
-    createLock(root, { runId, runtime: 'codex', pid: process.pid, protected: ['.codex/model-ladder.json', '.claude/model-ladder.json', ...config.protected], tests: TEST_PATTERNS, ...(input.resumeRun && { resumeRun: input.resumeRun }) })
+    createLock(root, { runId, runtime: 'codex', pid: process.pid, protected: ['.codex/model-ladder.json', '.claude/model-ladder.json', ...config.protected], tests: TEST_PATTERNS, ...((input.directRun ?? input.resumeRun) && { resumeRun: input.directRun ?? input.resumeRun }) })
     ownsLock = true
     // Machine-wide, so another run's usage guard can stop this one (scripts/usage-guard.mjs forceStopRuns).
     registerRun({ runId, pid: process.pid, root, runtime: 'codex' })
@@ -186,28 +188,37 @@ export async function runLadder(input, options = {}) {
     const artifacts = artifactDir(root)
     run = join(artifacts, runId)
     mkdirSync(run, { recursive: true })
+    publish()
     const baseTree = withMutex(root, 'apply', () => snapshot(root, run, 'base'))
     let checkpoint
-    if (input.resumeRun) {
-      const sourceRun = join(artifacts, input.resumeRun)
+    const sourceId = input.directRun ?? input.resumeRun
+    if (sourceId) {
+      const sourceRun = join(artifacts, sourceId)
       checkpoint = JSON.parse(readFileSync(join(sourceRun, 'checkpoint.json'), 'utf8'))
-      if (checkpoint.runId !== input.resumeRun || checkpoint.baseCommit !== baseCommit || checkpoint.baseTree !== baseTree ||
+      if (checkpoint.runId !== sourceId || checkpoint.baseCommit !== baseCommit || checkpoint.baseTree !== baseTree ||
         !isDeepStrictEqual(settled(checkpoint.config), settled(config)) || checkpoint.task !== input.task || !isDeepStrictEqual(checkpoint.acceptance, acceptance) ||
         !Number.isSafeInteger(checkpoint.attempt) || checkpoint.attempt < 1 || !isCell(checkpoint.cell, config.tiers)) throw new Error('Checkpoint does not match this checkout, configuration or task.')
       const sourceResult = JSON.parse(readFileSync(join(sourceRun, 'result.json'), 'utf8'))
       const sourceCwd = join(sourceRun, `attempt-${checkpoint.attempt}`)
-      if (sourceResult.status !== 'STOPPED' || sourceResult.runId !== input.resumeRun || sourceResult.worktreePath !== sourceCwd ||
+      if (sourceResult.status !== (input.directRun ? 'DIRECT' : 'STOPPED') || sourceResult.runId !== sourceId || sourceResult.worktreePath !== sourceCwd ||
         git(sourceCwd, 'rev-parse', '--show-toplevel').replaceAll('\\', '/').toLowerCase() !== sourceCwd.replaceAll('\\', '/').toLowerCase() ||
         git(sourceCwd, 'rev-parse', 'HEAD') !== baseCommit) throw new Error('Checkpoint is not an owned interrupted attempt.')
-      validate(checkpoint.route, SCHEMAS.route)
+      validate(checkpoint.route, Object.hasOwn(checkpoint.route, 'small') ? SCHEMAS.directRoute : SCHEMAS.route)
       checkpoint.tree = snapshot(sourceCwd, run, 'resume')
     }
+    const directContext = input.contextTokens !== undefined && input.contextWindow !== undefined &&
+      isDirect(true, input.contextTokens, input.forceLadder, input.contextWindow, config.direct_threshold)
     const ask = async (phase, cell, cwd, prompt, sandbox = 'read-only') => {
       const skills = phase === 'worker' ? config.worker_skills : phase === 'verify' ? config.verifier_skills : ''
       if (skills.trim() && !skills.includes('${')) prompt += `\n\nSKILL INSTRUCTIONS\n${skills}\n\nInterpret these natural-language instructions in the context of your assigned task and role. Evaluate each condition first, then select only the applicable relevant skills, plugins, slash commands, MCP tools or other capabilities actually available in this session. Existing name lists are requests to use those capabilities where relevant. A name may be a skill, a plugin name or an MCP server name (tools named mcp__<server>__*); map it to the matching available capability. Locate and read selected skills' SKILL.md files using the supplied skill paths and follow them, and call plugin, slash-command and MCP tools directly, within this role's scope, permissions, protected paths and verification rules. Verifiers only check and report; they never fix code. If an applicable required capability cannot be found, report it explicitly as a blocker and list the available capabilities you checked; never invent names or claim to have used a capability you did not use. Never invoke model-ladder skills, workflows or runners recursively.`
+      prompt += '\nNever spawn other agents or delegate this role. Never stage files or push.'
+      if (phase === 'worker') prompt += `\nRun the provided VERIFY command yourself when available${verifySkill ? `, or follow the existing project verification skill at ${verifySkill}` : ''}. Report the actual self-check commands and results in summary; do not invent a passing check or acceptance criteria. Verification by another role remains required.`
+      if (phase === 'route' && directContext) prompt += '\nAlso return small (boolean) and smallReason. small is true only for a trivial, bounded task the calling session can implement safely. Context size is supplied by the caller; do not infer or invent it.'
+      if (phase === 'worker' && route.allowTests) prompt += '\nTEST-WRITER ROLE: the user requested test changes. Tests must check real behavior; never weaken existing tests. Change code under test only if the task requests it. Explicit protected paths and verification inputs remain forbidden.'
       checkUsage()
       return role(phase, cell, input.task, async () => {
-        const response = await codexExec({ phase, cell, cwd, run, prompt, sandbox, timeoutMs: config.timeoutMs, signal: controller.signal, executable: options.executable })
+        const response = await codexExec({ phase, cell, cwd, run, prompt, sandbox, timeoutMs: config.timeoutMs, signal: controller.signal, executable: options.executable,
+          ...(phase === 'route' && directContext && { schema: SCHEMAS.directRoute }) })
         usage.push({ phase, cell: label(cell), turns: response.usage })
         return response.value
       })
@@ -217,15 +228,16 @@ Also return estimatedMinutes: an integer, your estimate of the wall-clock minute
     const lowest = { model: config.tiers[0].model, effort: config.tiers[0].efforts[0] }
     let cell = checkpoint?.cell ?? (isCell(route, config.tiers) ? { model: route.model, effort: route.effort } : lowest)
     result.plan = { ...route, start: label(cell), verify: verify ?? verifySkill, acceptance }
-    if (route.question || !route.readOnly && !verify && !verifySkill && !acceptance.length) {
+    if (route.question) {
       result.status = 'NEEDS_INPUT'
-      result.message = route.question ?? 'No existing verification command was found. Supply explicit acceptance criteria in acceptance, or configure verify in .codex/model-ladder.json.'
+      result.message = route.question
       return result
     }
-    if (!checkpoint && !input.forceLadder && input.acceptSplit !== false) {
+    if (!checkpoint && !input.forceLadder && !(directContext && route.small === true) && input.acceptSplit !== false) {
       const splitSuggest = splitSuggestion(route.estimatedMinutes, route.split, config.split_minutes)
       if (splitSuggest) return Object.assign(result, { status: 'NEEDS_INPUT', reason: 'SPLIT', message: `Estimated ${splitSuggest.estimatedMinutes} minutes, over the ${splitSuggest.limit} minute limit. Run the ${splitSuggest.parts.length} parts in sequence, run the whole task, or stop?`, splitSuggestion: splitSuggest })
     }
+    if (!route.readOnly && !verify && !verifySkill && !acceptance.length) return Object.assign(result, { status: 'NEEDS_INPUT', message: 'No existing verification command was found. Supply explicit acceptance criteria in acceptance, or configure verify in .codex/model-ladder.json.' })
     // Runs whose scopes do not overlap go ahead side by side; an overlap waits for the user.
     const claim = claimScope(root, runId, { scope: route.scope, readOnly: route.readOnly === true, clear: Boolean(input.clearStale), force })
     if (claim.status !== 'READY') {
@@ -248,11 +260,21 @@ Also return estimatedMinutes: an integer, your estimate of the wall-clock minute
     for (let number = 1; number <= config.maxAttempts; number++) {
       const cwd = makeWorktree(root, run, number, baseCommit, number === 1 && checkpoint ? checkpoint.tree : baseTree)
       owned.push(cwd)
-      const attempt = { cell: label(cell), worktreePath: cwd, pass: false, reason: '', diagnosis: null }
+      live.worktreePath = cwd
+      if (!checkpoint && number === 1 && directContext && route.small === true) {
+        retain(cwd, number)
+        result.status = 'DIRECT'
+        delete result.resumeRun
+        result.directRun = runId
+        result.protected = protection
+        result.message = `Implement the small task only in worktreePath, then rerun with directRun and directSummary for independent verification. ${route.smallReason}`
+        return result
+      }
+      const attempt = { cell: input.directRun && number === 1 ? 'DIRECT/caller' : label(cell), worktreePath: cwd, pass: false, reason: '', diagnosis: null }
       attempts.push(attempt)
       let worker, verdict, tree
       try {
-        worker = await ask('worker', cell, cwd, `Implement exactly one model-ladder attempt.\nTASK\n${input.task}\nGOAL\n${route.goal}\nSCOPE\n${JSON.stringify(route.scope)}\nACCEPTANCE\n${JSON.stringify(acceptance)}\nVERIFY\n${verify ?? 'Independent verifier follows project verify skill or user acceptance'}\nHINT FROM FAILED ATTEMPTS\n${hint}\nPREVIOUS RESULTS\n${JSON.stringify(attempts.slice(0, -1).map(({ cell, reason }) => ({ cell, reason })))}\nWork only in this worktree. The user's existing uncommitted changes are already present; preserve them. Do not commit, change branches, reset, or edit git metadata. ${route.readOnly ? 'READ ONLY. Make no file changes. Your summary must contain the full report.' : `Do not modify protected paths matching ${JSON.stringify(protection)}. Tests define expected behavior. Return a concise summary and status done, or blocked with blockedReason.`} Include concise model handoff context in summary: progress, decisions, user constraints supplied here, cautions, failed approaches, and next steps. Separate what you verified from claims or unfinished work; do not infer parent conversation context.`, route.readOnly ? 'read-only' : 'workspace-write')
+        worker = input.directRun && number === 1 ? { status: 'done', summary: input.directSummary, blockedReason: null } : await ask('worker', cell, cwd, `Implement exactly one model-ladder attempt.\nTASK\n${input.task}\nGOAL\n${route.goal}\nSCOPE\n${JSON.stringify(route.scope)}\nACCEPTANCE\n${JSON.stringify(acceptance)}\nVERIFY\n${verify ?? 'Independent verifier follows project verify skill or user acceptance'}\nHINT FROM FAILED ATTEMPTS\n${hint}\nPREVIOUS RESULTS\n${JSON.stringify(attempts.slice(0, -1).map(({ cell, reason }) => ({ cell, reason })))}\nWork only in this worktree. The user's existing uncommitted changes are already present; preserve them. Do not commit, change branches, reset, or edit git metadata. ${route.readOnly ? 'READ ONLY. Make no file changes. Your summary must contain the full report.' : `Do not modify protected paths matching ${JSON.stringify(protection)}. Tests define expected behavior. Return a concise summary and status done, or blocked with blockedReason.`} Include concise model handoff context in summary: progress, decisions, user constraints supplied here, cautions, failed approaches, and next steps. Separate what you verified from claims or unfinished work; do not infer parent conversation context.`, route.readOnly ? 'read-only' : 'workspace-write')
         if (git(cwd, 'rev-parse', 'HEAD') !== baseCommit) throw new Error('Worker changed the base commit')
         tree = snapshot(cwd, run, `worker-${number}`)
         const protectedFile = protectedChange(cwd, baseTree, tree, protection) ?? changedNpmScripts(cwd, baseTree, tree, verify)
@@ -270,7 +292,7 @@ Also return estimatedMinutes: an integer, your estimate of the wall-clock minute
             })
           }
           if (!verdict || verdict.pass) {
-            verdict = await ask('verify', config.verifier, cwd, `Independently verify every user acceptance criterion against repository contents and actual diff. ${verifySkill ? `Follow the existing project verification skill at ${verifySkill} and run its checks. Resolve paths referenced by that skill relative to the directory containing its SKILL.md.` : ''} Do not edit source, tests or verification inputs. Build artifacts from verification checks are allowed. Do not trust the worker summary.\nTASK\n${input.task}\nACCEPTANCE\n${JSON.stringify(acceptance.length ? acceptance : [input.task])}\nBASE TREE (Git tree object, not a commit or HEAD)\n${baseTree}\nWORKER REPORT\n${worker.summary}\n${route.readOnly ? 'This is a report task; inspect cited sources and judge the report.' : `The base tree snapshots the original checkout, including pre-existing dirty changes. Compare the attempt against that tree with git diff ${baseTree} --; do not use HEAD as the baseline or count pre-existing changes as attempt changes. Check git status --short and inspect untracked files too, since git diff omits them.`}`, route.readOnly ? 'read-only' : 'workspace-write')
+            verdict = await ask('verify', config.verifier, cwd, `Independently verify every user acceptance criterion against repository contents and actual diff. ${verifySkill ? `Follow the existing project verification skill at ${verifySkill} and run its checks. Resolve paths referenced by that skill relative to the directory containing its SKILL.md.` : ''} Do not edit source, tests or verification inputs. Build artifacts from verification checks are allowed. Do not trust the worker summary. If the task changes tests, check that they assert real behavior and do not weaken existing tests, and that code under test changed only when requested.\nTASK\n${input.task}\nACCEPTANCE\n${JSON.stringify(acceptance.length ? acceptance : [input.task])}\nBASE TREE (Git tree object, not a commit or HEAD)\n${baseTree}\nWORKER REPORT\n${worker.summary}\n${route.readOnly ? 'This is a report task; inspect cited sources and judge the report.' : `The base tree snapshots the original checkout, including pre-existing dirty changes. Compare the attempt against that tree with git diff ${baseTree} --; do not use HEAD as the baseline or count pre-existing changes as attempt changes. Check git status --short and inspect untracked files too, since git diff omits them.`}`, route.readOnly ? 'read-only' : 'workspace-write')
           }
           const after = snapshot(cwd, run, `verify-${number}`)
           const tampered = protectedChange(cwd, baseTree, after, protection) ?? changedNpmScripts(cwd, baseTree, after, verify)
@@ -290,7 +312,8 @@ Also return estimatedMinutes: an integer, your estimate of the wall-clock minute
       attempt.reason = verdict.reason
       options.onProgress?.(`#${number} ${attempt.cell}: ${verdict.pass ? 'PASS' : `FAIL (${verdict.reason})`}`)
       if (verdict.pass) {
-        const outcome = route.readOnly ? { applied: false, files: [] } : applyResult(root, run, baseTree, tree, baseCommit)
+        checkUsage()
+        const outcome = route.readOnly ? { applied: false, files: [] } : applyResult(root, run, baseTree, tree, baseCommit, { commit: config.commit, goal: route.goal })
         if (outcome.patch) keep.push(cwd)
         result.status = outcome.patch ? 'CONFLICT' : 'VERIFIED'
         result.outcome = outcome
@@ -303,7 +326,7 @@ Also return estimatedMinutes: an integer, your estimate of the wall-clock minute
       if (number === config.maxAttempts || !moves.length) break
       let diagnosis
       try {
-        diagnosis = await ask('diagnose', config.router, cwd, `Diagnose this failed model-ladder attempt. Read only.\nTASK\n${input.task}\nCELL\n${label(cell)}\nFAILURE\n${JSON.stringify(verdict)}\nWORKER\n${JSON.stringify(worker)}\nLEGAL NEXT CELLS\n${JSON.stringify(moves)}\nRaise effort or model when stronger reasoning can help. stop_environment for missing dependencies, invalid credentials, unavailable services or permissions. stop_unclear for ambiguous goals. For raise actions choose a legal cell. For stop actions use null model and effort. Give the next worker a short hint. Each retry starts from the original snapshot.`)
+        diagnosis = await ask('diagnose', config.router, cwd, `Diagnose this failed model-ladder attempt. Read only.\nTASK\n${input.task}\nCELL\n${label(cell)}\nFAILURE\n${JSON.stringify(verdict)}\nWORKER\n${JSON.stringify(worker)}\nLEGAL NEXT CELLS\n${JSON.stringify(moves)}\nRaise effort or model when stronger reasoning can help. stop_environment for missing dependencies, required skills/plugins/MCP tools, invalid credentials, unavailable services or permissions. stop_unclear for ambiguous goals. For raise actions choose a legal cell. For stop actions use null model and effort. Give the next worker a short hint. Each retry starts from the original snapshot.`)
       } catch (caught) {
         const error = usageStop ?? caught
         if (stops(error)) { retain(cwd, number); throw error }
@@ -324,6 +347,9 @@ Also return estimatedMinutes: an integer, your estimate of the wall-clock minute
     return result
   } catch (caught) {
     const error = usageStop ?? caught
+    if (error.code === 'USAGE_LIMIT' && !usageStop) {
+      try { forceStopRuns({ exclude: result.runId, reason: `Force-stopped: ${error.message}` }) } catch {}
+    }
     result.status = stops(error) ? 'STOPPED' : 'ERROR'
     result.message = [error.message, error.stderr].filter(Boolean).join('\n').slice(-4000)
     if (error.code) result.errorCode = error.code
@@ -340,7 +366,7 @@ Also return estimatedMinutes: an integer, your estimate of the wall-clock minute
           if (result.errorCode === 'USAGE_LIMIT') {
             result.handoffPath = join(root, '.model-ladder', 'HANDOFF.md')
             publish()
-            writeHandoff(root)
+            writeHandoff(root, { live })
           }
           writeFileSync(join(run, 'result.json'), JSON.stringify(result, null, 2))
           appendFileSync(join(root, '.model-ladder', 'history.jsonl'), `${JSON.stringify({ date: new Date().toISOString(), runtime: 'codex', task: input.task, ...result })}\n`)
@@ -362,7 +388,7 @@ export function readInput(argv = process.argv.slice(2)) {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   if (process.argv.includes('--help') || process.argv.includes('-h')) {
-    process.stdout.write('Usage: node codex-run.mjs <task>\nOr: node codex-run.mjs --input <UTF-8 JSON file>\nOr pass JSON on stdin: {task, acceptance?: string[], allowDirty?: boolean, resumeRun?: string, clearStale?: true | runId, acceptSplit?: false}\nConfiguration: ~/.codex/model-ladder.json (personal, e.g. usageGuard), then .codex/model-ladder.json (project, wins). Run locks (runs/), history, live state and HANDOFF.md: .model-ladder/. Per-run worktrees, logs, checkpoints and result.json: <system temp>/model-ladder/<repo hash>/.\n')
+    process.stdout.write('Usage: node codex-run.mjs <task>\nOr: node codex-run.mjs --input <UTF-8 JSON file>\nOr pass JSON on stdin: {task, acceptance?: string[], allowDirty?: boolean, resumeRun?: string, clearStale?: true | runId, acceptSplit?: false, forceLadder?: boolean, contextTokens?: number, contextWindow?: number, directRun?: string, directSummary?: string}\nConfiguration: ~/.codex/model-ladder.json (personal, e.g. usageGuard), then .codex/model-ladder.json (project, wins). Run locks (runs/), history, live state and HANDOFF.md: .model-ladder/. Per-run worktrees, logs, checkpoints and result.json: <system temp>/model-ladder/<repo hash>/.\n')
     process.exit(0)
   }
   const controller = new AbortController()
@@ -372,6 +398,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     const input = readInput()
     const result = await runLadder(input, { signal: controller.signal, onProgress: (line) => process.stderr.write(`${line}\n`) })
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`)
-    process.exitCode = result.status === 'VERIFIED' ? 0 : ['DIRTY', 'NEEDS_INPUT', 'STALE_RUN'].includes(result.status) ? 2 : 1
+    process.exitCode = result.status === 'VERIFIED' ? 0 : ['DIRTY', 'NEEDS_INPUT', 'STALE_RUN', 'DIRECT'].includes(result.status) ? 2 : 1
   } catch (error) { process.stderr.write(`${error.message}\n`); process.exitCode = 1 }
 }

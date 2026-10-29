@@ -6,6 +6,14 @@ model-ladder 的所有重要變更。版本遵循 [semantic versioning](https://
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-10-29
+
+- Codex 在呼叫端提供實際 context 資料時支援 DIRECT：目前對話修改隔離草稿，再交回 runner 獨立驗證後套用。
+- Codex 支援選用 commit，只提交已驗證且不含原有或同時修改的檔案，保留無關的 staged 變更。
+- Codex SessionStart 套用個人與專案的 autorun／panel 設定；test-writer 提示補齊與 Claude 相同的測試行為規則。
+- 額度 handoff 使用各 run 的 live 狀態；Codex 自身額度錯誤也會停止其他已註冊 runner。同步兩端技能與雙語文件，修正 split_minutes 的過時說明並列出平台限制。
+- Windows 拒絕停止程序樹時回報錯誤並保留作用中註冊，不將仍存活的 run 標為已停止，也不產生錯誤的停止 handoff。
+
 ## [1.0.1] - 2026-10-29
 
 - **用量上限時一次停止所有 run。** 用量達 `usageGuard` 門檻，或 Claude 的訂閱硬上限讓 agent 停下時，不再等目前的 agent 跑完。model-ladder 會強制停止這台機器上其他所有 model-ladder run（包括其 Codex 子程序），並為每個被停止的 run 寫出含 Stopped 段落的 `.model-ladder/HANDOFF.md`。也可用 `node scripts/usage-guard.mjs --enforce` 從命令列執行。

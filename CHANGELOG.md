@@ -6,6 +6,14 @@ All notable changes to model-ladder. Versions follow [semantic versioning](https
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-10-29
+
+- Codex supports DIRECT when actual caller context data is available. The session edits an isolated draft and returns it for independent verification before application.
+- Codex supports opt-in commits of verified files, preserving unrelated staged changes and skipping commits that would include pre-existing or concurrent edits.
+- Codex SessionStart respects personal and project autorun/panel settings. Test-writing prompts now include the same behavioral rules as Claude's test-writer.
+- Quota handoffs use per-run live state, and native Codex quota errors also stop other registered runners. Updated both runtime skills and bilingual documentation, including the existing Codex split_minutes support and platform limits.
+- If Windows denies process-tree termination, report the error and keep the active registration. Do not mark the surviving run stopped or write a false stopped handoff.
+
 ## [1.0.1] - 2026-10-29
 
 - **Usage limit stops every run at once.** When usage reaches the `usageGuard` threshold, or Claude's hard subscription limit stops an agent, model-ladder no longer waits for the current agent to finish. It force-stops every other model-ladder run on this machine, including its Codex child processes, and writes each stopped run's `.model-ladder/HANDOFF.md` with a Stopped section. `node scripts/usage-guard.mjs --enforce` does the same from the command line.

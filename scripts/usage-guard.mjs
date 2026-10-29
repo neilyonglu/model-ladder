@@ -63,7 +63,7 @@ export function activeRuns() {
 // Codex child (its SIGTERM handler aborts every running process), then SIGKILL for what is left of its group.
 export function killTree(pid) {
   if (process.platform === 'win32') {
-    try { execFileSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true, timeout: 5000 }) } catch {}
+    execFileSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true, timeout: 5000 })
     return
   }
   try { process.kill(pid, 'SIGTERM') } catch {}
@@ -77,10 +77,14 @@ export function forceStopRuns({ exclude = null, reason = 'Force-stopped: usage r
   const stopped = []
   for (const entry of activeRuns()) {
     if (entry.runId === exclude || entry.pid === process.pid) continue
-    killTree(entry.pid)
+    try { killTree(entry.pid) }
+    catch (error) {
+      process.stderr.write(`model-ladder: could not stop run ${entry.runId} (pid ${entry.pid}): ${error.message}. Active registration retained; no stopped handoff was written.\n`)
+      continue
+    }
     unregisterRun(entry.runId)
     if (typeof entry.root === 'string') {
-      try { handoff(entry.root, { stopped: reason }) } catch {}
+      try { handoff(entry.root, { stopped: reason, runId: entry.runId }) } catch {}
       // Killed outright on Windows, so its own cleanup never runs; its lock would only look stale.
       if (process.platform === 'win32' && typeof entry.runId === 'string') releaseLock(entry.root, entry.runId)
     }

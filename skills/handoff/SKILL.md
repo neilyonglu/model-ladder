@@ -12,7 +12,7 @@ You write `HANDOFF.md`. The program-generated template lacks what only this sess
 
 ## 1. Template data
 
-Run `node "${CLAUDE_PLUGIN_ROOT}/scripts/finish.mjs" --handoff`. It writes `.model-ladder/HANDOFF.md` from the last run in `.model-ladder/history.jsonl`: task, attempts with PASS/FAIL, status, kept worktree, resume command. Read the file it wrote. If it says there is no run history, there is no appendix; skip step 3's appendix.
+Run `node "${CLAUDE_PLUGIN_ROOT}/scripts/finish.mjs" --handoff`. It writes `.model-ladder/HANDOFF.md` from the last run in `.model-ladder/history.jsonl`: task, attempts with PASS/FAIL, status, kept worktree, resume command. Read the file it wrote. In a repository with concurrent runs, confirm its task and run ID match the run being handed off. HANDOFF.md is shared; do not attribute another run's status or model context to this conversation. If it says there is no run history, there is no appendix; skip step 3's appendix.
 
 ## 2. Rewrite HANDOFF.md
 

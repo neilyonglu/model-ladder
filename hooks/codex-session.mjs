@@ -1,14 +1,12 @@
-import { readFileSync, existsSync } from 'node:fs'
-import { join } from 'node:path'
+import { readFileSync } from 'node:fs'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { autorunText } from './autorun.mjs'
+import { loadLayered } from '../scripts/config.mjs'
 
 export function sessionText(input = {}, env = process.env) {
   if (env.MODEL_LADDER_ROLE) return ''
   const cwd = input.cwd ?? process.cwd()
-  let config = {}
-  const path = join(cwd, '.codex', 'model-ladder.json')
-  if (existsSync(path)) config = JSON.parse(readFileSync(path, 'utf8'))
+  const config = loadLayered(cwd, 'codex', { autoRun: true, band: true })
   const parts = []
   if (env.MODEL_LADDER_HUD === '1') {
     parts.push('model-ladder HUD is already running in this terminal. Reuse it; do not start a separate watcher.')

@@ -88,4 +88,4 @@ function hardLimit(text) {
   return { message, resets }
 }
 
-export { legalMoves, defaultMove, pickMove, isCell, protectedPatterns, ARTIFACTS }
+export { legalMoves, defaultMove, pickMove, isCell, isDirect, splitSuggestion, protectedPatterns, ARTIFACTS }

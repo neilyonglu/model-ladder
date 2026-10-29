@@ -31,6 +31,9 @@ export function validate(value, schema, path = 'output') {
   return value
 }
 
+// Request this extra decision only when the caller supplies actual context data.
+SCHEMAS.directRoute = object({ ...SCHEMAS.route.properties, small: { type: 'boolean' }, smallReason: string })
+
 export class EnvironmentError extends Error {}
 const SETUP_FAILURE = /not authenticated|unauthorized|authentication|login required|log in|invalid.*api.?key|401\b|403\b|model.{0,80}(not found|not available|not supported|unsupported|does not exist)|(?:unsupported|not supported).{0,80}(model|reasoning|effort)|(?:reasoning|effort).{0,80}(?:unsupported|not supported)|sandbox|permission denied|access denied/i
 const LIMIT_FAILURE = /usage.limit|rate.limit|quota|too many requests|\b429\b/i
@@ -80,10 +83,10 @@ export function processRun(command, args, { cwd, input = '', timeoutMs = 600000,
   })
 }
 
-export async function codexExec({ phase, cell, cwd, run, prompt, sandbox, timeoutMs, signal, executable }) {
+export async function codexExec({ phase, cell, cwd, run, prompt, sandbox, timeoutMs, signal, executable, schema = SCHEMAS[phase] }) {
   const schemaPath = join(run, `${phase}.schema.json`)
   const outputPath = join(run, `${phase}.output.json`)
-  writeFileSync(schemaPath, JSON.stringify(SCHEMAS[phase]))
+  writeFileSync(schemaPath, JSON.stringify(schema))
   rmSync(outputPath, { force: true })
   const args = [...(executable?.prefixArgs ?? []), 'exec', '-m', cell.model, '-c', `model_reasoning_effort=${JSON.stringify(cell.effort)}`,
     '-C', cwd, '--json', '--output-schema', schemaPath, '-o', outputPath, '--ephemeral', '--sandbox', sandbox, '-']
@@ -109,7 +112,7 @@ export async function codexExec({ phase, cell, cwd, run, prompt, sandbox, timeou
   }
   if (result.code !== 0 || errors) throw new Error(`Codex ${phase} failed (${result.code}): ${errorText.slice(-4000)}`)
   let value
-  try { value = validate(JSON.parse(readFileSync(outputPath, 'utf8')), SCHEMAS[phase]) }
+  try { value = validate(JSON.parse(readFileSync(outputPath, 'utf8')), schema) }
   catch (error) { throw new Error(`Codex ${phase} returned invalid output: ${error.message}`) }
   const usage = events.filter((event) => event.type === 'turn.completed').map((event) => event.usage ?? {})
   return { value, usage }

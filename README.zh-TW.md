@@ -56,7 +56,7 @@ Claude Code 使用 `/model-ladder:run <task>`。Codex 請 agent 使用 `model-la
 2. **建立含測試的功能**：`/model-ladder:run Add a --json flag to the export command, with tests`。任務要求測試時，worker 可編輯測試。否則測試受保護，不能為了通過而變更。
 3. **提問或審查（不變更）**：`/model-ladder:run Review src/auth.ts and list risks`。答案在報告中，檔案不會變更。
 4. **被 usage guard 停止**：`/model-ladder:run Migrate the settings module to the new config format`。失敗後 5 小時使用量達 90% 時，執行回傳 `USAGE_LIMIT`、保留最後 worktree 並寫入 `.model-ladder/HANDOFF.md`。重設後重跑。
-5. **小任務回傳 DIRECT**：`/model-ladder:run Rename the variable tmp to buffer in utils.py`。很長的 Claude session（超過約 300k tokens）中，小任務由本 session 直接完成。之後由 `model-ladder:verifier` agent（設定中 `verifier` 的 model 與 effort）獨立檢查 diff；通過才回報完成，失敗則修正後再驗。加上 `--ladder` 可強制走 ladder。
+5. **小任務回傳 DIRECT**：`/model-ladder:run Rename the variable tmp to buffer in utils.py`。Claude session 的 context 達 direct_threshold 百分比時，小任務由本 session 直接完成。之後由 `model-ladder:verifier` agent（設定中 `verifier` 的 model 與 effort）獨立檢查 diff；通過才回報完成，失敗則修正後再驗。加上 `--ladder` 可強制走 ladder。
 
 完成的執行會產生類似下面的報告。Claude Code 與 Codex 讀完後，會用你在這個 session 使用的語言整理成一份摘要回報（狀態、改了哪些檔案、驗證結果、限制與待辦），檔名、指令與路徑保留原文：
 
@@ -76,7 +76,7 @@ Applied   to the working tree (not committed)
 
 Verify 是你的測試命令，每一列是一次嘗試。未提交變更、任務不清楚、沒有測試，或設定 `CLAUDE_CODE_EFFORT_LEVEL` / `CLAUDE_CODE_SUBAGENT_MODEL_FORCE` 時會先詢問。每次執行記錄在 `.model-ladder/history.jsonl`。沒有 verify step 時，`/model-ladder:create-verification-skill` 會產生 `.claude/skills/verify/`，`/model-ladder:maintain-verification-skill` 會保持它最新。兩者改編自 [pstack](https://github.com/michael-denyer/pstack-claude)，採 MIT 授權。見 NOTICE.md。
 
-直接執行 Codex runner：`node scripts/codex-run.mjs "<task>"`，只有 `VERIFIED` 的 exit code 是 0。Codex desktop 中，session hook 與 ladder skill 會指示 Codex 自動啟動並顯示常駐 terminal panel，可跨任務重用。也可手動執行 `node scripts/watch.mjs [--cwd <repo>]`。沒有 terminal panel 時，runner 會在 tool output 顯示進度。Codex 使用 router `gpt-5.6-terra/low`、verifier `gpt-6-luna/low`，tier 為 Luna、Terra、Sol（以帳戶可用模型替換）；沒有 `DIRECT` shortcut 或 `commit` 選項。
+直接執行 Codex runner：`node scripts/codex-run.mjs "<task>"`，只有 `VERIFIED` 的 exit code 是 0。Codex desktop 中，session hook 與 ladder skill 會指示 Codex 自動啟動並顯示常駐 terminal panel，可跨任務重用。也可手動執行 `node scripts/watch.mjs [--cwd <repo>]`。沒有 terminal panel 時，runner 會在 tool output 顯示進度。Codex 使用 router `gpt-5.6-terra/low`、verifier `gpt-6-luna/low`，tier 為 Luna、Terra、Sol（以帳戶可用模型替換）。DIRECT 與選用 commit 的流程見下方設定。
 
 要在 Codex CLI 的同一個終端顯示一行 HUD，請先執行 `npm ci`，再於本專案目錄執行 `node scripts/codex-hud.mjs --cwd <repo>`（接續 session 則加上 `-- resume`）。Windows 需要 PATH 中的原生 `codex.exe`，或以 `CODEX_BINARY` 指定；不接受 `.cmd` 或 `.bat` 啟動器。
 
@@ -94,6 +94,10 @@ Verify 是你的測試命令，每一列是一次嘗試。未提交變更、任�
 
 ## 設定
 
+Codex 的 DIRECT 分兩次呼叫。第一次僅在已有實際資料時傳入 `contextTokens`、`contextWindow`。router 判斷任務小且比例達 `direct_threshold` 時，回傳 `DIRECT`（exit 2）、隔離的 `worktreePath`、`protected` 與 `directRun`。目前對話只修改該草稿，再以原始輸入加上 `directRun`、`directSummary` 交回 runner，經獨立驗證後才套用。缺少 context 資料時走一般 ladder，不能猜測數值。`forceLadder: true` 停用 DIRECT 與分段建議。宿主 sandbox 無法修改草稿時，改走一般 ladder；不可繞過權限。DIRECT 不代表已驗證。
+
+Codex 支援 `commit: true`，在獨立驗證後提交變更，並保留無關的 staged 檔案。受影響檔案若含原有或同時發生的修改，會跳過 commit；提交失敗也會保留已套用的結果，透過 `outcome.note` 說明。預設不 commit，永不 push。要求修功能不等於授權開啟此選項。
+
 設定分兩層，都可省略。設定的每個 key 會取代下一層的值：
 
 1. **個人**（你自己的、套用所有專案、不會 commit）：`~/.claude/model-ladder.json`（Claude Code；有設 `CLAUDE_CONFIG_DIR` 時為 `$CLAUDE_CONFIG_DIR/model-ladder.json`）或 `~/.codex/model-ladder.json`（Codex；`$CODEX_HOME/model-ladder.json`）。個人習慣放這裡，尤其是 `usageGuard`。`MODEL_LADDER_USER_CONFIG` 可指定其他檔案（測試用）。
@@ -109,14 +113,14 @@ Verify 是你的測試命令，每一列是一次嘗試。未提交變更、任�
 | `maxAttempts` | `4` | 放棄前的嘗試次數 |
 | `verify` | 由 router 找出 | 證明任務完成的命令 |
 | `protected` | `[]` | worker 不得修改的額外 glob |
-| `commit` | `false` | 提交已驗證的變更，僅 Claude 支援 |
+| `commit` | `false` | 提交已驗證的變更；Codex 遇到原有或同時修改的檔案時跳過提交 |
 | `keepFailed` | `false` | 保留失敗嘗試的 worktree |
 | `usageGuard` | `{"enabled":true,"threshold":90}` | 到 5 小時或每週額度的 `threshold`%（1-100）時停止，欄位可單獨設定。屬個人設定，建議放個人檔 |
 | `timeoutMs` | `600000` | 僅 Codex，每個角色或 verify 命令的閒置時間上限 |
 | `worker_skills` | `""` | 給 worker 與 test-writer 的 skill／plugin／MCP 工具指示（自然語言字串） |
 | `verifier_skills` | `""` | 給 verifier 的 skill／plugin／MCP 工具指示（自然語言字串） |
-| `direct_threshold` | `30` | 任務小且呼叫端 session 的 context 佔其 context window 至少此百分比時，由該 session 直接做（數字 1-100，或 `"off"` 表示永不直接做）。Codex 會忽略 |
-| `split_minutes` | `20` | router 預估任務超過此分鐘數時，run 會先停下，詢問要分段執行、整個照跑或停止（分鐘數，或 `"off"`）。僅 Claude Code；Codex 會忽略 |
+| `direct_threshold` | `30` | 任務小且呼叫端 context 比例達此值時走 DIRECT（1-100 或 `"off"`）；Codex 須由呼叫端提供實際的 contextTokens 與 contextWindow |
+| `split_minutes` | `20` | 兩端皆支援。router 預估超過此分鐘數時，詢問分段執行、整個照跑或停止（分鐘數或 `"off"`）；Codex 用 acceptSplit: false 選擇整個照跑 |
 
 模型為別名（`haiku`、`sonnet`、`opus`），新版本會自動套用。Codex 在 `.codex/model-ladder.json` 也支援 `autoRun`、`band`（boolean，預設 `true`）。`MODEL_LADDER_BAND=0` 會隱藏 Codex panel，但不關閉 autorun。Codex `tiers` 以同樣方式使用 `efforts` 和 `maxEffortJump`。沒有 `verify` 時，Codex 依序使用 `.agents/skills/verify/SKILL.md`、`.claude/skills/verify/SKILL.md`，或既有 npm、pytest、Cargo、Go、Maven、Make 測試命令。
 
