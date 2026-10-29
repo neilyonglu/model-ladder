@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact|fork",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "command -v node >/dev/null 2>&1 || { printf '%s\\n' '{\"systemMessage\":\"model-ladder needs Node.js 20 or later. Install the current Node.js LTS from https://nodejs.org/en/download, then restart Claude Code/Codex.\",\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"model-ladder needs Node.js 20 or later. Install the current Node.js LTS from https://nodejs.org/en/download, then restart Claude Code/Codex.\"}}'; exit 0; }; node -e 'process.exit(parseInt(process.versions.node)<20?1:0)' || { printf '%s\\n' '{\"systemMessage\":\"model-ladder needs Node.js 20 or later. Install the current Node.js LTS from https://nodejs.org/en/download, then restart Claude Code/Codex.\",\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"model-ladder needs Node.js 20 or later. Install the current Node.js LTS from https://nodejs.org/en/download, then restart Claude Code/Codex.\"}}'; exit 0; }; exec node \"${PLUGIN_ROOT}/hooks/codex-session.mjs\"",
+            "commandWindows": "powershell.exe -NoProfile -Command \"if (-not (Get-Command node -ErrorAction SilentlyContinue)) { @{systemMessage='model-ladder needs Node.js 20 or later. Install the current Node.js LTS from https://nodejs.org/en/download, then restart Claude Code/Codex.';hookSpecificOutput=@{hookEventName='SessionStart';additionalContext='model-ladder needs Node.js 20 or later. Install the current Node.js LTS from https://nodejs.org/en/download, then restart Claude Code/Codex.'}} | ConvertTo-Json -Compress; exit 0 }; if ([int](& node -p 'parseInt(process.versions.node)') -lt 20) { @{systemMessage='model-ladder needs Node.js 20 or later. Install the current Node.js LTS from https://nodejs.org/en/download, then restart Claude Code/Codex.';hookSpecificOutput=@{hookEventName='SessionStart';additionalContext='model-ladder needs Node.js 20 or later. Install the current Node.js LTS from https://nodejs.org/en/download, then restart Claude Code/Codex.'}} | ConvertTo-Json -Compress; exit 0 }; & node '${PLUGIN_ROOT}/hooks/codex-session.mjs'\"",
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  }
+}

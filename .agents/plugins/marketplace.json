@@ -1,0 +1,16 @@
+{
+  "name": "model-ladder",
+  "owner": {
+    "name": "usio0108"
+  },
+  "plugins": [
+    {
+      "name": "model-ladder",
+      "source": {
+        "source": "local",
+        "path": "./"
+      },
+      "description": "Run a coding task on the cheapest model and effort likely to succeed, verify it, and escalate on failure."
+    }
+  ]
+}

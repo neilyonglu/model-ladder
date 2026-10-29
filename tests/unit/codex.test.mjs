@@ -1,0 +1,707 @@
+import '../helpers/isolate-home.mjs'
+import assert from 'node:assert/strict'
+import { execFileSync, spawnSync } from 'node:child_process'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { test, after } from 'node:test'
+import { runLadder, loadConfig, discoverVerify, readInput } from '../../scripts/codex-run.mjs'
+import { SCHEMAS, validate, environmentFailure, usageLimitFailure } from '../../scripts/codex-exec.mjs'
+import { artifactDir, pruneRuns } from '../../scripts/common.mjs'
+
+const dirs = [], repos = []
+// The usage guard is on by default: point it at an empty Codex home so this machine's real usage never decides a test.
+const NO_USAGE = mkdtempSync(join(tmpdir(), 'ladder-no-usage-'))
+process.env.CODEX_HOME = NO_USAGE
+// Each fixture repo's run artifacts live in the system temp dir, outside the fixture; remove them too.
+after(() => {
+  for (const dir of repos) rmSync(artifactDir(dir), { recursive: true, force: true })
+  dirs.forEach((dir) => rmSync(dir, { recursive: true, force: true }))
+})
+const inside = (path, dir) => path.replaceAll('\\', '/').toLowerCase().startsWith(dir.replaceAll('\\', '/').toLowerCase() + '/')
+const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
+const fake = fileURLToPath(new URL('../helpers/fake-codex.mjs', import.meta.url))
+const write = (root, file, value) => { mkdirSync(join(root, file, '..'), { recursive: true }); writeFileSync(join(root, file), value) }
+const read = (root, file) => readFileSync(join(root, file), 'utf8')
+function fixture(scenario = {}, overrides = {}) {
+  const dir = mkdtempSync(join(tmpdir(), 'ml-codex-'))
+  dirs.push(dir)
+  repos.push(dir)
+  git(dir, 'init', '-q')
+  git(dir, 'config', 'user.name', 'test')
+  git(dir, 'config', 'user.email', 'test@example.test')
+  git(dir, 'config', 'core.autocrlf', 'false')
+  write(dir, '.gitignore', '.model-ladder/\n')
+  write(dir, 'greeting.mjs', 'export default "Wellcome"\n')
+  write(dir, 'tests/check.test.mjs', 'import assert from "node:assert/strict"\nimport greeting from "../greeting.mjs"\nassert.equal(greeting,"Welcome")\n')
+  write(dir, 'scenario.json', JSON.stringify(scenario))
+  write(dir, '.codex/model-ladder.json', JSON.stringify({
+    router: { model: 'cheap', effort: 'low' }, verifier: { model: 'cheap', effort: 'low' },
+    tiers: [{ model: 'cheap', efforts: ['low', 'medium', 'high'], maxEffortJump: 1 }, { model: 'strong', efforts: ['low', 'high'], maxEffortJump: 1 }],
+    verify: 'node --test tests/check.test.mjs', maxAttempts: 3, ...overrides,
+  }))
+  git(dir, 'add', '-A')
+  git(dir, 'commit', '-qm', 'fixture')
+  return dir
+}
+const run = (cwd, input = {}, extra = {}) => runLadder({ task: 'Fix greeting typo', ...input }, { cwd, executable: { command: process.execPath, prefixArgs: [fake, cwd] }, ...extra })
+const calls = (dir) => read(dir, '.model-ladder/fake-calls.jsonl').trim().split('\n').map(JSON.parse)
+const cleaned = (dir) => { assert.equal(existsSync(join(dir, '.model-ladder/run.json')), false); assert.deepEqual(existsSync(join(dir, '.model-ladder/runs')) ? readdirSync(join(dir, '.model-ladder/runs')).filter((f) => f.endsWith('.json')) : [], []); assert.equal(git(dir, 'worktree', 'list', '--porcelain').match(/^worktree /gm).length, 1) }
+
+test('same package identity/version and generated rules do not drift', () => {
+  const root = fileURLToPath(new URL('../../', import.meta.url))
+  const cc = JSON.parse(read(root, '.claude-plugin/plugin.json'))
+  const codex = JSON.parse(read(root, '.codex-plugin/plugin.json'))
+  assert.equal(cc.name, codex.name)
+  assert.equal(cc.version, codex.version)
+  assert.equal(codex.skills, './codex-skills/')
+  const market = JSON.parse(read(root, '.agents/plugins/marketplace.json'))
+  assert.deepEqual(market.plugins[0].source, { source: 'local', path: './' })
+  execFileSync(process.execPath, ['scripts/sync-rules.mjs', '--check'], { cwd: root })
+})
+test('first pass applies incremental changes, ignores benign stderr, records usage and leaves index unchanged', async () => {
+  const dir = fixture({ warning: true, newUntracked: true })
+  const index = git(dir, 'write-tree')
+  const result = await run(dir)
+  assert.equal(result.status, 'VERIFIED', JSON.stringify(result))
+  assert.equal(result.outcome.applied, true)
+  assert.deepEqual(result.outcome.files, ['greeting.mjs', 'new-file.txt'])
+  assert.match(read(dir, 'greeting.mjs'), /Welcome/)
+  assert.equal(git(dir, 'write-tree'), index)
+  assert.equal(result.usage[0].turns[0].output_tokens, 5)
+  assert.deepEqual(calls(dir).map((c) => [c.phase, c.sandbox]), [['route', 'read-only'], ['worker', 'workspace-write'], ['verify', 'workspace-write']])
+  assert.ok(calls(dir).every((call) => call.prompt.startsWith('This is one internal model-ladder role. Do not invoke model-ladder')))
+  cleaned(dir)
+})
+
+test('a codex run leaves both lines in info/exclude', async () => {
+  const dir = fixture({})
+  await run(dir)
+  const lines = read(dir, git(dir, 'rev-parse', '--git-path', 'info/exclude')).split('\n')
+  assert.ok(lines.includes('.claude/worktrees/'))
+  assert.ok(lines.filter((l) => l === '.model-ladder/').length <= 1)
+  cleaned(dir)
+})
+
+test('passing existing tests cannot approve a task rejected by the independent verifier', async () => {
+  const dir = fixture({ verifyPass: false }, { maxAttempts: 1 })
+  const result = await run(dir)
+  assert.equal(result.status, 'FAILED', JSON.stringify(result))
+  assert.match(result.attempts[0].reason, /Requested behavior is missing/)
+  assert.match(read(dir, 'greeting.mjs'), /Wellcome/)
+  cleaned(dir)
+})
+
+test('command-backed semantic verification rejects source tampering', async () => {
+  const dir = fixture({ verifyFiles: { 'greeting.mjs': 'export default "tampered"\n' } }, { maxAttempts: 1 })
+  const result = await run(dir)
+  assert.equal(result.status, 'FAILED', JSON.stringify(result))
+  assert.match(result.attempts[0].reason, /Verification changed repository files/)
+  assert.match(read(dir, 'greeting.mjs'), /Wellcome/)
+  cleaned(dir)
+})
+test('failed test escalates legally, invalid route and move fall back, retry starts from original snapshot', async () => {
+  const dir = fixture({ failFirst: true, invalidStart: true, invalidMove: true })
+  const result = await run(dir)
+  assert.equal(result.status, 'VERIFIED', JSON.stringify(result))
+  assert.deepEqual(result.attempts.map((a) => a.cell), ['cheap/low', 'cheap/medium'])
+  assert.equal(result.attempts[0].pass, false)
+  assert.match(calls(dir).findLast((c) => c.phase === 'worker').prompt, /Fix the greeting/)
+  cleaned(dir)
+})
+test('environment error stops immediately instead of spending on escalation', async () => {
+  const dir = fixture({ environment: 'worker' })
+  const result = await run(dir)
+  assert.equal(result.status, 'STOPPED')
+  assert.notEqual(result.errorCode, 'USAGE_LIMIT')
+  assert.equal(result.handoffPath, undefined)
+  assert.deepEqual(calls(dir).map((c) => c.phase), ['route', 'worker'])
+  assert.match(read(dir, 'greeting.mjs'), /Wellcome/)
+  assert.ok(existsSync(result.checkpointPath))
+  git(dir, 'worktree', 'remove', '--force', result.worktreePath)
+  cleaned(dir)
+})
+test('diagnosis can stop an environmental test failure', async () => {
+  const dir = fixture({ alwaysFail: true, stopEnvironment: true })
+  const result = await run(dir)
+  assert.equal(result.status, 'STOPPED')
+  assert.ok(existsSync(result.checkpointPath))
+  git(dir, 'worktree', 'remove', '--force', result.worktreePath)
+  cleaned(dir)
+})
+test('dirty snapshot preserves staged/unstaged edits and real index', async () => {
+  const dir = fixture()
+  write(dir, 'notes.txt', 'staged note\n')
+  git(dir, 'add', 'notes.txt')
+  write(dir, 'notes.txt', 'staged plus unstaged note\n')
+  write(dir, 'tests/check.test.mjs', read(dir, 'tests/check.test.mjs') + '\n// User test edit\n')
+  const index = git(dir, 'write-tree')
+  assert.equal((await run(dir)).status, 'DIRTY')
+  const result = await run(dir, { allowDirty: true })
+  assert.equal(result.status, 'VERIFIED', JSON.stringify(result))
+  assert.equal(read(dir, 'notes.txt'), 'staged plus unstaged note\n')
+  assert.match(read(dir, 'tests/check.test.mjs'), /User test edit/)
+  assert.equal(git(dir, 'write-tree'), index)
+  assert.deepEqual(result.outcome.files, ['greeting.mjs'])
+  cleaned(dir)
+})
+test('protected test edits including existing user edits cannot be laundered', async () => {
+  const dir = fixture({ tamper: 'tests' }, { maxAttempts: 1 })
+  write(dir, 'tests/check.test.mjs', read(dir, 'tests/check.test.mjs') + '// User edit\n')
+  const result = await run(dir, { allowDirty: true })
+  assert.equal(result.status, 'FAILED')
+  assert.match(result.attempts[0].reason, /protected file/)
+  assert.match(read(dir, 'tests/check.test.mjs'), /User edit/)
+  cleaned(dir)
+})
+test('test-writing permission keeps Codex configuration protected', async () => {
+  const dir = fixture({ tamper: 'config', allowTests: true }, { maxAttempts: 1 })
+  const result = await run(dir)
+  assert.equal(result.status, 'FAILED')
+  assert.match(result.attempts[0].reason, /protected file .codex/)
+  cleaned(dir)
+})
+test('verification itself may not tamper with tests or source', async () => {
+  const dir = fixture({}, { maxAttempts: 1, verify: 'node -e "require(\'fs\').appendFileSync(\'tests/check.test.mjs\',\'tampered\')"' })
+  const result = await run(dir)
+  assert.equal(result.status, 'FAILED')
+  assert.match(result.attempts[0].reason, /Verification changed|protected/)
+  cleaned(dir)
+})
+test('without existing verification the user must supply acceptance', async () => {
+  const dir = fixture({}, { verify: null })
+  const result = await run(dir)
+  assert.equal(result.status, 'NEEDS_INPUT')
+  assert.equal(result.attempts.length, 0)
+  assert.match(result.message, /acceptance/)
+  cleaned(dir)
+  const accepted = await run(dir, { acceptance: ['Greeting is Welcome'] })
+  assert.equal(accepted.status, 'VERIFIED', JSON.stringify(accepted))
+  assert.ok(calls(dir).some((c) => c.phase === 'verify'))
+  cleaned(dir)
+})
+test('vague task asks its clarifying question', async () => {
+  const dir = fixture({ question: 'Which greeting?' })
+  assert.equal((await run(dir)).message, 'Which greeting?')
+  cleaned(dir)
+})
+test('read-only report does not apply or stage user edits', async () => {
+  const dir = fixture({ readOnly: true })
+  write(dir, 'notes.txt', 'user note\n')
+  const before = git(dir, 'write-tree')
+  const result = await run(dir, { allowDirty: true })
+  assert.equal(result.status, 'VERIFIED', JSON.stringify(result))
+  assert.match(result.summary, /Greeting comes from/)
+  assert.equal(result.outcome.applied, false)
+  assert.equal(git(dir, 'write-tree'), before)
+  assert.equal(read(dir, 'notes.txt'), 'user note\n')
+  assert.ok(calls(dir).find((c) => c.phase === 'worker').sandbox === 'read-only')
+  cleaned(dir)
+})
+test('patch conflict retains the verified worktree and patch without overwriting concurrent work', async () => {
+  const dir = fixture({ conflict: true })
+  const result = await run(dir)
+  assert.equal(result.status, 'CONFLICT', JSON.stringify(result))
+  assert.ok(existsSync(result.outcome.patch))
+  assert.ok(existsSync(result.worktreePath))
+  assert.ok(inside(result.outcome.patch, artifactDir(dir)) && inside(result.worktreePath, artifactDir(dir)))
+  assert.deepEqual(pruneRuns(dir), [])
+  assert.ok(existsSync(result.outcome.patch) && existsSync(result.worktreePath))
+  assert.match(read(dir, 'greeting.mjs'), /Concurrent edit/)
+  git(dir, 'worktree', 'remove', '--force', result.worktreePath)
+  cleaned(dir)
+})
+test('cleanup never removes an unrelated worktree created during a run', async () => {
+  const unrelated = mkdtempSync(join(tmpdir(), 'ml-unrelated-'))
+  dirs.push(unrelated)
+  rmSync(unrelated, { recursive: true })
+  const dir = fixture({ createUnrelated: unrelated })
+  const result = await run(dir)
+  assert.equal(result.status, 'VERIFIED', JSON.stringify(result))
+  assert.ok(existsSync(unrelated))
+  git(dir, 'worktree', 'remove', '--force', unrelated)
+  cleaned(dir)
+})
+test('existing Claude marker blocks Codex and is never removed', async () => {
+  const dir = fixture()
+  write(dir, '.model-ladder/run.json', '{"runtime":"claude"}')
+  const result = await run(dir)
+  assert.equal(result.status, 'STALE_RUN')
+  assert.equal(read(dir, '.model-ladder/run.json'), '{"runtime":"claude"}')
+})
+const otherRun = (dir, runId, extra) => write(dir, `.model-ladder/runs/${runId}.json`, JSON.stringify({ runId, runtime: 'claude', pid: null, protected: [], tests: [], scope: null, ...extra }))
+const ownLocks = (dir) => readdirSync(join(dir, '.model-ladder/runs')).filter((f) => f.endsWith('.json'))
+test('a Codex run beside an active Claude Code run on other files proceeds, and leaves its lock alone', async () => {
+  const dir = fixture()
+  otherRun(dir, 'claude-other', { scope: ['docs/**'] })
+  const result = await run(dir)
+  assert.equal(result.status, 'VERIFIED', JSON.stringify(result))
+  assert.match(read(dir, 'greeting.mjs'), /Welcome/)
+  assert.deepEqual(ownLocks(dir), ['claude-other.json'])
+})
+test('an overlapping active run stops Codex with NEEDS_INPUT before any worker, never overwriting it', async () => {
+  const dir = fixture()
+  otherRun(dir, 'claude-other', { scope: ['greeting.mjs'] })
+  const result = await run(dir)
+  assert.equal(result.status, 'NEEDS_INPUT', JSON.stringify(result))
+  assert.equal(result.reason, 'OVERLAP')
+  assert.deepEqual(result.overlaps.map((o) => o.runId), ['claude-other'])
+  assert.deepEqual(calls(dir).map((c) => c.phase), ['route'])
+  assert.match(read(dir, 'greeting.mjs'), /Wellcome/)
+  assert.deepEqual(ownLocks(dir), ['claude-other.json'])
+  // The user says that run is gone: clearing it by ID lets this one through.
+  const cleared = await run(dir, { clearStale: 'claude-other' })
+  assert.equal(cleared.status, 'VERIFIED', JSON.stringify(cleared))
+  assert.deepEqual(ownLocks(dir), [])
+})
+test('a lock whose process is gone is STALE_RUN; clearStale removes only that lock', async () => {
+  const dir = fixture()
+  const dead = spawnSync(process.execPath, ['-e', '']).pid
+  otherRun(dir, 'codex-dead', { runtime: 'codex', pid: dead, scope: ['greeting.mjs'] })
+  otherRun(dir, 'claude-other', { scope: ['docs/**'] })
+  const stale = await run(dir)
+  assert.equal(stale.status, 'STALE_RUN')
+  assert.deepEqual(stale.locks.map((l) => l.runId), ['codex-dead'])
+  assert.equal((await run(dir, { clearStale: false })).status, 'STALE_RUN', 'clearStale false clears nothing')
+  const result = await run(dir, { clearStale: true })
+  assert.equal(result.status, 'VERIFIED', JSON.stringify(result))
+  assert.deepEqual(ownLocks(dir), ['claude-other.json'])
+})
+test('invalid structured response is rejected at boundary', async () => {
+  const dir = fixture({ badOutput: 'worker' }, { maxAttempts: 1 })
+  const result = await run(dir)
+  assert.equal(result.status, 'FAILED')
+  assert.match(result.attempts[0].reason, /invalid output/)
+  assert.throws(() => validate({ pass: true, reason: '', output: '', injected: true }, SCHEMAS.verify), /unexpected property/)
+  cleaned(dir)
+})
+test('timeout cancels the child and releases the run marker', async () => {
+  const dir = fixture({ delay: 5000 }, { timeoutMs: 1000 })
+  const result = await run(dir)
+  assert.equal(result.status, 'STOPPED', JSON.stringify(result))
+  assert.match(result.message, /Timed out/)
+  assert.ok(existsSync(result.worktreePath))
+  assert.ok(existsSync(result.checkpointPath))
+  assert.match(result.attempts[0].reason, /Timed out/)
+  const runPath = join(artifactDir(dir), result.runId)
+  assert.ok(readdirSync(runPath).some((file) => /^worker-.*events.jsonl$/.test(file)))
+  assert.ok(existsSync(join(runPath, 'result.json')))
+  assert.ok(inside(result.worktreePath, runPath) && inside(result.checkpointPath, runPath))
+  assert.equal(existsSync(join(dir, '.model-ladder', result.runId)), false)
+  assert.equal(existsSync(join(dir, '.model-ladder/run.json')), false)
+  assert.ok(existsSync(join(dir, '.model-ladder/history.jsonl')))
+  const live = JSON.parse(read(dir, '.model-ladder/live.json'))
+  assert.equal(live.runId, result.runId)
+  assert.deepEqual(live.agents.map((a) => [a.phase, a.pass]), [['route', true], ['worker', false]])
+  assert.ok(live.agents.every((a) => a.endedAt && Date.parse(a.endedAt) >= Date.parse(a.startedAt)))
+  assert.ok(Date.parse(live.updatedAt) >= Date.parse(live.agents.at(-1).endedAt))
+})
+
+test('live state and snapshots describe every role at start/end, including verification command', async () => {
+  const dir = fixture({ delay: 50 })
+  const frames = [], states = []
+  const result = await run(dir, {}, { onProgress: (text) => {
+    if (!text.startsWith('▴')) return
+    frames.push(text)
+    states.push(JSON.parse(read(dir, '.model-ladder/live.json')))
+  } })
+  assert.equal(result.status, 'VERIFIED', JSON.stringify(result))
+  const final = JSON.parse(read(dir, '.model-ladder/live.json'))
+  assert.equal(final.runId, result.runId)
+  assert.deepEqual(final.usage, { fiveHour: null, sevenDay: null })
+  assert.deepEqual(final.agents.map((a) => a.phase), ['route', 'worker', 'verify-command', 'verify'])
+  for (const [index, agent] of final.agents.entries()) {
+    assert.ok(agent.model && agent.effort && agent.task)
+    assert.equal(agent.pass, true)
+    assert.ok(Date.parse(agent.endedAt) >= Date.parse(agent.startedAt))
+    assert.ok(states.some((s) => s.agents[index]?.endedAt === null && s.agents[index]?.pass === null))
+    assert.ok(states.some((s) => s.agents[index]?.endedAt === agent.endedAt))
+  }
+  assert.match(frames.at(-1), /idle/)
+  assert.match(frames.join('\n'), /worker: Fix greeting typo/)
+  assert.equal(readdirSync(join(dir, '.model-ladder')).some((f) => f.endsWith('.tmp')), false)
+})
+
+test('cancellation closes the active live row and writes a final snapshot', async () => {
+  const dir = fixture({ delay: 5000 })
+  const controller = new AbortController()
+  const result = await run(dir, {}, { signal: controller.signal, onProgress: (text) => {
+    if (text.startsWith('worker cheap/low: START')) controller.abort()
+  } })
+  assert.equal(result.errorCode, 'CANCELLED')
+  const live = JSON.parse(read(dir, '.model-ladder/live.json'))
+  assert.equal(live.agents.at(-1).phase, 'worker')
+  assert.equal(live.agents.at(-1).pass, false)
+  assert.ok(live.agents.every((a) => a.endedAt))
+})
+
+test('interrupted drafts resume in a new worktree only against the original task and checkout', async () => {
+  const dir = fixture({ delay: 10000, delayFirst: true, partialFiles: { 'draft.txt': 'unfinished draft' }, expectWorkerFiles: { 'draft.txt': 'unfinished draft' } }, { timeoutMs: 2000 })
+  const stopped = await run(dir)
+  assert.equal(stopped.status, 'STOPPED', JSON.stringify(stopped))
+  assert.equal(read(stopped.worktreePath, 'draft.txt'), 'unfinished draft')
+  assert.match(read(dir, 'greeting.mjs'), /Wellcome/)
+  const resumeRun = stopped.resumeRun
+  assert.equal((await run(dir, { resumeRun, task: 'Different task' })).status, 'ERROR')
+  write(dir, 'notes.txt', 'new user change')
+  assert.equal((await run(dir, { resumeRun })).status, 'DIRTY')
+  assert.equal((await run(dir, { resumeRun, allowDirty: true })).status, 'ERROR')
+  rmSync(join(dir, 'notes.txt'))
+  write(stopped.worktreePath, 'tests/check.test.mjs', 'process.exit(0)\n')
+  const tampered = await run(dir, { resumeRun })
+  assert.equal(tampered.status, 'ERROR')
+  assert.match(tampered.message, /protected/)
+  write(stopped.worktreePath, 'tests/check.test.mjs', read(dir, 'tests/check.test.mjs'))
+  const result = await run(dir, { resumeRun })
+  assert.equal(result.status, 'VERIFIED', JSON.stringify(result))
+  assert.equal(read(dir, 'draft.txt'), 'unfinished draft')
+  assert.notEqual(result.attempts[0].worktreePath, stopped.worktreePath)
+  assert.equal(read(stopped.worktreePath, 'draft.txt'), 'unfinished draft')
+  assert.ok(calls(dir).findLast((call) => call.phase === 'verify'))
+  git(dir, 'worktree', 'remove', '--force', stopped.worktreePath)
+  cleaned(dir)
+})
+
+function fakeUsage(percent) {
+  const home = mkdtempSync(join(tmpdir(), 'ml-home-'))
+  dirs.push(home)
+  write(home, 'sessions/s.jsonl', JSON.stringify({ payload: { rate_limits: { primary: { used_percent: percent, resets_at: Math.floor(Date.now() / 1000) + 3600 } } } }) + '\n')
+  return home
+}
+test('usageGuard validates its configuration', () => {
+  const dir = fixture({}, { usageGuard: { enabled: 'yes', threshold: 90 } })
+  assert.throws(() => loadConfig(dir), /usageGuard/)
+  write(dir, '.codex/model-ladder.json', JSON.stringify({ usageGuard: { enabled: true, threshold: 101 } }))
+  assert.throws(() => loadConfig(dir), /usageGuard/)
+  write(dir, '.codex/model-ladder.json', JSON.stringify({}))
+  assert.deepEqual(loadConfig(dir).usageGuard, { enabled: true, threshold: 90 })
+  write(dir, '.codex/model-ladder.json', JSON.stringify({ usageGuard: { enabled: false } }))
+  assert.deepEqual(loadConfig(dir).usageGuard, { enabled: false, threshold: 90 })
+})
+test('usageGuard stops at the threshold with a handoff and releases the marker', async () => {
+  const dir = fixture({}, { usageGuard: { enabled: true, threshold: 90 } })
+  process.env.CODEX_HOME = fakeUsage(95)
+  try {
+    const result = await run(dir)
+    assert.equal(result.status, 'STOPPED', JSON.stringify(result))
+    assert.equal(result.errorCode, 'USAGE_LIMIT')
+    assert.match(result.message, /95%.*90%/)
+    assert.match(readFileSync(result.handoffPath, 'utf8'), /Fix greeting typo/)
+    assert.match(read(dir, 'greeting.mjs'), /Wellcome/)
+    cleaned(dir)
+  } finally { process.env.CODEX_HOME = NO_USAGE }
+})
+test('usageGuard disabled ignores high usage', async () => {
+  const dir = fixture({}, { usageGuard: { enabled: false } })
+  process.env.CODEX_HOME = fakeUsage(95)
+  try {
+    const result = await run(dir)
+    assert.equal(result.status, 'VERIFIED', JSON.stringify(result))
+    assert.equal(result.handoffPath, undefined)
+  } finally { process.env.CODEX_HOME = NO_USAGE }
+})
+
+test('UTF-8 JSON files preserve Chinese including a PowerShell UTF-8 BOM', async () => {
+  const dir = fixture()
+  const file = join(dir, '.model-ladder', 'input.json')
+  const input = { task: '修正中文問候', acceptance: ['問候必須正確'] }
+  write(dir, '.model-ladder/input.json', '\uFEFF' + JSON.stringify(input))
+  assert.deepEqual(readInput(['--input', file]), input)
+  const result = await runLadder(readInput(['--input', file]), { cwd: dir, executable: { command: process.execPath, prefixArgs: [fake, dir] } })
+  assert.equal(result.status, 'VERIFIED', JSON.stringify(result))
+  assert.ok(calls(dir).every((call) => call.prompt.includes(input.task)))
+  cleaned(dir)
+})
+
+test('CLI reports waiting statuses with exit 2 and errors with exit 1', () => {
+  const dir = fixture()
+  const runner = fileURLToPath(new URL('../../scripts/codex-run.mjs', import.meta.url))
+  const file = join(dir, '.model-ladder', 'input.json')
+  const invoke = (input) => {
+    write(dir, '.model-ladder/input.json', '\uFEFF' + JSON.stringify(input))
+    const child = spawnSync(process.execPath, [runner, '--input', file], { cwd: dir, encoding: 'utf8' })
+    return { code: child.status, result: JSON.parse(child.stdout) }
+  }
+  assert.deepEqual(invoke({ task: '' }), { code: 2, result: { status: 'NEEDS_INPUT', message: 'Provide a task with a clear outcome.' } })
+  write(dir, 'notes.txt', 'dirty')
+  assert.equal(invoke({ task: 'Fix greeting' }).code, 2)
+  assert.equal(invoke({ task: 'Fix greeting' }).result.status, 'DIRTY')
+  rmSync(join(dir, 'notes.txt'))
+  write(dir, '.model-ladder/run.json', '{"runtime":"claude"}')
+  const stale = invoke({ task: 'Fix greeting' })
+  assert.equal(stale.code, 2)
+  assert.equal(stale.result.status, 'STALE_RUN')
+  const invalid = invoke({ task: 'Fix greeting', allowDirty: 'yes' })
+  assert.equal(invalid.code, 1)
+  assert.equal(invalid.result.status, 'ERROR')
+})
+test('invalid configuration and acceptance stop before a model call; native discovery uses existing tests', async () => {
+  const dir = fixture({}, { maxAttempts: 0 })
+  assert.equal((await run(dir)).status, 'ERROR')
+  assert.equal((await run(dir, { acceptance: [1] })).status, 'ERROR')
+  assert.throws(() => loadConfig(dir), /positive integers/)
+  write(dir, 'package.json', JSON.stringify({ scripts: { test: 'node --test' } }))
+  assert.equal(discoverVerify(dir), 'npm test')
+})
+const seed = (dir, files) => {
+  for (const [file, value] of Object.entries(files)) write(dir, file, value)
+  git(dir, 'add', '-A')
+  git(dir, 'commit', '-qm', 'verification inputs')
+}
+const npmPackage = (scripts = { test: 'node --test tests/check.test.mjs' }, dependencies = {}) => JSON.stringify({ scripts, dependencies })
+
+test('applying verified patches preserves EOF whitespace and binary bytes exactly', async () => {
+  const contents = { 'z-end.txt': 'new\n   \n', 'a-binary.bin': '\0\u0001binary\u00ff\n' }
+  const dir = fixture({ workerFiles: contents })
+  const result = await run(dir)
+  assert.equal(result.status, 'VERIFIED', JSON.stringify(result))
+  for (const [file, value] of Object.entries(contents)) assert.deepEqual(readFileSync(join(dir, file)), Buffer.from(value))
+  cleaned(dir)
+})
+
+test('unsupported ChatGPT-account model stops without diagnosis or escalation', async () => {
+  assert.equal(environmentFailure('The reasoning effort ultra is not supported for this model.'), true)
+  const dir = fixture({ environment: 'worker', environmentMessage: 'The gpt-6-luna model is not supported when using Codex with a ChatGPT account.' })
+  const result = await run(dir)
+  assert.equal(result.status, 'STOPPED', JSON.stringify(result))
+  assert.deepEqual(calls(dir).map((c) => c.phase), ['route', 'worker'])
+  assert.ok(existsSync(result.checkpointPath))
+  git(dir, 'worktree', 'remove', '--force', result.worktreePath)
+  cleaned(dir)
+})
+
+test('Codex usage, rate and quota limits are USAGE_LIMIT; auth, sandbox and model errors stay environment errors', () => {
+  const limits = [
+    "You've hit your usage limit. Upgrade to Pro or try again later.",
+    'stream error: exceeded retry limit, last status: 429 Too Many Requests',
+    'Rate limit reached for requests',
+    'You exceeded your current quota, please check your plan and billing details.',
+  ]
+  const setup = [
+    'Not authenticated. Run codex login.',
+    '401 Unauthorized',
+    'sandbox error: permission denied',
+    'The gpt-6-luna model is not supported when using Codex with a ChatGPT account.',
+    'Not authenticated (rate limit status unavailable)',
+  ]
+  for (const text of limits) assert.ok(usageLimitFailure(text) && environmentFailure(text), text)
+  for (const text of setup) assert.ok(!usageLimitFailure(text) && environmentFailure(text), text)
+  assert.equal(usageLimitFailure('TypeError: cannot read properties of undefined'), false)
+})
+
+test('a real Codex usage limit stops with USAGE_LIMIT, keeps the draft and writes HANDOFF.md', async () => {
+  const dir = fixture({ environment: 'worker', environmentMessage: "ERROR: You've hit your usage limit. Try again in 3 hours." })
+  const result = await run(dir)
+  assert.equal(result.status, 'STOPPED', JSON.stringify(result))
+  assert.equal(result.errorCode, 'USAGE_LIMIT')
+  assert.deepEqual(calls(dir).map((c) => c.phase), ['route', 'worker'])
+  const handoff = readFileSync(result.handoffPath, 'utf8')
+  assert.equal(read(dir, '.model-ladder/HANDOFF.md'), handoff)
+  assert.match(handoff, /Fix greeting typo/)
+  assert.match(handoff, /Wait for the quota reset/)
+  assert.match(handoff, new RegExp(`"resumeRun": "${result.runId}"`))
+  assert.ok(handoff.includes(result.checkpointPath))
+  assert.ok(inside(result.checkpointPath, artifactDir(dir)) && existsSync(result.checkpointPath))
+  assert.match(read(dir, 'greeting.mjs'), /Wellcome/)
+  git(dir, 'worktree', 'remove', '--force', result.worktreePath)
+  cleaned(dir)
+})
+
+test('pruneRuns clears finished runs from the temp and legacy locations and keeps CONFLICT, checkpoint and unfinished runs', () => {
+  const dir = fixture()
+  const base = artifactDir(dir)
+  const id = (n) => `codex-00000000-0000-4000-8000-00000000000${n}`
+  const make = (n, result, extra = {}) => {
+    write(base, `${id(n)}/events.jsonl`, '')
+    if (result) write(base, `${id(n)}/result.json`, JSON.stringify(result))
+    for (const [file, value] of Object.entries(extra)) write(base, `${id(n)}/${file}`, value)
+  }
+  make(1, { status: 'VERIFIED' })
+  make(2, { status: 'FAILED' })
+  git(dir, 'worktree', 'add', '--detach', '-q', join(base, id(2), 'attempt-1'), 'HEAD')
+  make(3, { status: 'CONFLICT' })
+  make(4, { status: 'STOPPED' }, { 'checkpoint.json': '{}' })
+  make(5, null)
+  write(dir, `.model-ladder/${id(6)}/result.json`, JSON.stringify({ status: 'VERIFIED' }))
+  assert.deepEqual(pruneRuns(dir).sort(), [id(1), id(2), id(6)])
+  assert.deepEqual(readdirSync(base).sort(), [id(3), id(4), id(5)])
+  assert.equal(git(dir, 'worktree', 'list', '--porcelain').match(/^worktree /gm).length, 1)
+  assert.ok(!existsSync(join(dir, '.model-ladder', id(6))), 'a finished legacy run is pruned too')
+})
+
+test('codex SKILL.md writes the runner input to system temp, not .model-ladder, and deletes it', () => {
+  const text = readFileSync(new URL('../../codex-skills/model-ladder/SKILL.md', import.meta.url), 'utf8')
+  const step = text.split('\n').find((line) => line.startsWith('4. '))
+  assert.match(step, /system temp directory/)
+  assert.match(step, /GetTempPath\(\)/)
+  assert.match(step, /delete that file/)
+  assert.match(step, /UTF8Encoding/)
+  assert.doesNotMatch(step, /in the target repository's \.model-ladder directory/)
+})
+
+test('verify.mjs keeps its evidence under artifactDir, not .model-ladder', () => {
+  const root = new URL('../../', import.meta.url)
+  const source = readFileSync(new URL('.agents/skills/verify/verify.mjs', root), 'utf8')
+  assert.match(source, /join\(artifactDir\(root\), 'verification', randomUUID\(\)\)/)
+  assert.doesNotMatch(source, /\.model-ladder\/verification/)
+  for (const file of ['.agents/skills/verify/SKILL.md', '.agents/skills/verify/features/README.md']) {
+    assert.doesNotMatch(readFileSync(new URL(file, root), 'utf8'), /\.model-ladder\/verification/, file)
+  }
+})
+
+test('configured and discovered npm verification cannot be replaced by the worker', async () => {
+  for (const verify of [null, 'npm test']) {
+    const dir = fixture({ alwaysFail: true, workerFiles: { 'package.json': npmPackage({ test: 'node -e "process.exit(0)"' }) } }, { verify, maxAttempts: 1 })
+    seed(dir, { 'package.json': npmPackage() })
+    const result = await run(dir)
+    assert.equal(result.status, 'FAILED', JSON.stringify(result))
+    assert.match(result.attempts[0].reason, /protected file package.json scripts/)
+    assert.match(read(dir, 'greeting.mjs'), /Wellcome/)
+    assert.equal(read(dir, 'package.json'), npmPackage())
+    cleaned(dir)
+  }
+})
+
+test('npm verification protects hooks, nested scripts and npm configuration', async () => {
+  for (const workerFiles of [
+    { 'package.json': npmPackage({ test: 'node --test tests/check.test.mjs', pretest: 'node -e "process.exit(0)"' }) },
+    { 'package.json': npmPackage({ test: 'npm run check', check: 'node -e "process.exit(0)"' }) },
+    { '.npmrc': 'ignore-scripts=true\n' },
+  ]) {
+    const dir = fixture({ workerFiles }, { verify: 'npm test', maxAttempts: 1 })
+    seed(dir, { 'package.json': npmPackage({ test: 'npm run check', check: 'node --test tests/check.test.mjs' }) })
+    const result = await run(dir)
+    assert.equal(result.status, 'FAILED', JSON.stringify(result))
+    assert.match(result.attempts[0].reason, /protected file/)
+    cleaned(dir)
+  }
+})
+
+test('unchanged npm scripts permit dependency changes and preserve dirty user script baseline', async () => {
+  const scripts = { test: 'node --test tests/check.test.mjs', pretest: 'node -e "process.exit(0)"' }
+  const dir = fixture({ workerFiles: { 'package.json': npmPackage(scripts, { 'example-dependency': '1.0.0' }) } }, { verify: null })
+  seed(dir, { 'package.json': npmPackage() })
+  write(dir, 'package.json', npmPackage(scripts))
+  const result = await run(dir, { allowDirty: true })
+  assert.equal(result.status, 'VERIFIED', JSON.stringify(result))
+  assert.deepEqual(JSON.parse(read(dir, 'package.json')).scripts, scripts)
+  assert.equal(JSON.parse(read(dir, 'package.json')).dependencies['example-dependency'], '1.0.0')
+  cleaned(dir)
+})
+
+test('selected verify skill and helper files are protected before verification', async () => {
+  for (const folder of ['.agents/skills/verify', '.claude/skills/verify']) {
+    for (const file of ['SKILL.md', 'check.mjs']) {
+      const dir = fixture({ workerFiles: { [folder + '/' + file]: 'Always pass\n' } }, { verify: null, maxAttempts: 1 })
+      seed(dir, { [folder + '/SKILL.md']: 'Run check.mjs', [folder + '/check.mjs']: 'throw Error("real check")' })
+      const result = await run(dir)
+      assert.equal(result.status, 'FAILED', JSON.stringify(result))
+      assert.match(result.attempts[0].reason, /protected file/)
+      assert.equal(calls(dir).some((c) => c.phase === 'verify'), false)
+      cleaned(dir)
+    }
+  }
+})
+
+test('skill and acceptance verification can build while reports remain read-only', async () => {
+  const dir = fixture({ verifyFiles: { 'target/debug/check': 'build artifact' } }, { verify: null })
+  seed(dir, { '.agents/skills/verify/SKILL.md': 'Run cargo test' })
+  const result = await run(dir)
+  assert.equal(result.status, 'VERIFIED', JSON.stringify(result))
+  assert.equal(calls(dir).find((c) => c.phase === 'verify').sandbox, 'workspace-write')
+  assert.equal(existsSync(join(dir, 'target')), false)
+  cleaned(dir)
+  const report = fixture({ readOnly: true }, { verify: null })
+  seed(report, { '.agents/skills/verify/SKILL.md': 'Review report' })
+  assert.equal((await run(report)).status, 'VERIFIED')
+  assert.equal(calls(report).find((c) => c.phase === 'verify').sandbox, 'read-only')
+  cleaned(report)
+  const acceptance = fixture({ verifyFiles: { 'dist/check.mjs': 'build artifact' } }, { verify: null })
+  assert.equal((await run(acceptance, { acceptance: ['Greeting is Welcome'] })).status, 'VERIFIED')
+  assert.equal(calls(acceptance).find((c) => c.phase === 'verify').sandbox, 'workspace-write')
+  assert.equal(existsSync(join(acceptance, 'dist')), false)
+  cleaned(acceptance)
+})
+
+test('skill verification still rejects source and helper edits after verification', async () => {
+  for (const file of ['greeting.mjs', '.agents/skills/verify/check.mjs']) {
+    const dir = fixture({ verifyFiles: { [file]: 'tampered' } }, { verify: null, maxAttempts: 1 })
+    seed(dir, { '.agents/skills/verify/SKILL.md': 'Run check.mjs', '.agents/skills/verify/check.mjs': 'real checks' })
+    const result = await run(dir)
+    assert.equal(result.status, 'FAILED', JSON.stringify(result))
+    assert.match(result.attempts[0].reason, /Verification changed|protected/)
+    assert.match(read(dir, 'greeting.mjs'), /Wellcome/)
+    cleaned(dir)
+  }
+})
+
+test('discovered non-npm verifier definitions cannot be replaced before execution', async () => {
+  for (const [file, baseline] of Object.entries({ 'Makefile': 'test:\n\tfalse\n', 'pytest.ini': '[pytest]\n', 'pyproject.toml': '[tool.pytest.ini_options]\n', 'Cargo.toml': '[package]\nname="test"\n', 'go.mod': 'module test\n', 'pom.xml': '<project/>' })) {
+    const dir = fixture({ workerFiles: { [file]: 'tampered' } }, { verify: null, maxAttempts: 1 })
+    seed(dir, { [file]: baseline, ...(file === 'pyproject.toml' ? { 'tests/example.py': '' } : {}) })
+    const result = await run(dir)
+    assert.equal(result.status, 'FAILED', JSON.stringify(result))
+    assert.match(result.attempts[0].reason, /protected file/)
+    cleaned(dir)
+  }
+})
+
+test('deleted and renamed verification inputs remain protected', async () => {
+  const cases = [
+    { verify: 'npm test', files: { 'package.json': npmPackage() }, edits: { 'package.json': null } },
+    { verify: null, files: { '.agents/skills/verify/SKILL.md': 'Run check', '.agents/skills/verify/check.mjs': 'real check' }, edits: { '.agents/skills/verify/check.mjs': null, 'renamed-check.mjs': 'real check' } },
+  ]
+  for (const { verify, files, edits } of cases) {
+    const dir = fixture({ workerFiles: edits }, { verify, maxAttempts: 1 })
+    seed(dir, files)
+    const result = await run(dir)
+    assert.equal(result.status, 'FAILED', JSON.stringify(result))
+    assert.match(result.attempts[0].reason, /protected file/)
+    cleaned(dir)
+  }
+})
+
+test('npm prefix and workspace delegation protect nested manifest scripts while permitting dependencies', async () => {
+  const scripts = { test: 'node --test ../tests/check.test.mjs' }
+  for (const verify of ['npm --prefix frontend test', 'npm test']) {
+    const dir = fixture({ alwaysFail: true, workerFiles: { 'frontend/package.json': npmPackage({ test: 'node -e "process.exit(0)"' }) } }, { verify, maxAttempts: 1 })
+    seed(dir, { 'package.json': npmPackage({ test: 'npm --prefix frontend test' }), 'frontend/package.json': npmPackage(scripts) })
+    const result = await run(dir)
+    assert.equal(result.status, 'FAILED', JSON.stringify(result))
+    assert.match(result.attempts[0].reason, /protected file frontend\/package.json scripts/)
+    assert.match(read(dir, 'greeting.mjs'), /Wellcome/)
+    cleaned(dir)
+  }
+  const dir = fixture({ workerFiles: { 'frontend/package.json': npmPackage(scripts, { example: '1.0.0' }) } }, { verify: 'npm --prefix frontend test' })
+  seed(dir, { 'frontend/package.json': npmPackage(scripts) })
+  const result = await run(dir)
+  assert.equal(result.status, 'VERIFIED', JSON.stringify(result))
+  assert.equal(JSON.parse(read(dir, 'frontend/package.json')).dependencies.example, '1.0.0')
+  cleaned(dir)
+})
+
+test('role skill instructions reach the correct role intact and appear in live state', async () => {
+  const worker = 'When coding, use ponytail:ponytail.\nWhen doing UI, use available UI/UX skills.'
+  const verifier = 'When reviewing code, use ponytail:ponytail.\nReport findings without fixing code.'
+  const dir = fixture({}, { worker_skills: worker, verifier_skills: verifier })
+  const result = await run(dir)
+  assert.equal(result.status, 'VERIFIED', JSON.stringify(result))
+  const log = calls(dir)
+  assert.ok(log.find((c) => c.phase === 'worker').prompt.includes(`SKILL INSTRUCTIONS\n${worker}\n\nInterpret these natural-language instructions`))
+  assert.ok(!log.find((c) => c.phase === 'worker').prompt.includes(verifier))
+  assert.ok(log.find((c) => c.phase === 'verify').prompt.includes(`SKILL INSTRUCTIONS\n${verifier}\n\nInterpret these natural-language instructions`))
+  assert.ok(!log.find((c) => c.phase === 'verify').prompt.includes(worker))
+  assert.doesNotMatch(log.find((c) => c.phase === 'route').prompt, /SKILL INSTRUCTIONS/)
+  assert.match(log.find((c) => c.phase === 'worker').prompt, /Evaluate each condition first, then select only the applicable relevant skills/)
+  assert.equal(JSON.parse(read(dir, '.model-ladder/live.json')).skills.worker, worker)
+  cleaned(dir)
+})
+
+test('report-only tasks without tests use independent review without asking for criteria', async () => {
+  const dir = fixture({ readOnly: true }, { verify: null })
+  const result = await run(dir)
+  assert.equal(result.status, 'VERIFIED', JSON.stringify(result))
+  assert.equal(result.outcome.applied, false)
+  cleaned(dir)
+})
