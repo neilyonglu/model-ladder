@@ -6,6 +6,12 @@ All notable changes to model-ladder. Versions follow [semantic versioning](https
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-10-29
+
+- **Usage limit stops every run at once.** When usage reaches the `usageGuard` threshold, or Claude's hard subscription limit stops an agent, model-ladder no longer waits for the current agent to finish. It force-stops every other model-ladder run on this machine, including its Codex child processes, and writes each stopped run's `.model-ladder/HANDOFF.md` with a Stopped section. `node scripts/usage-guard.mjs --enforce` does the same from the command line.
+- **Codex checks usage mid-agent.** The Codex runner checks usage every 2 seconds and aborts the running Codex child or verify command as soon as the threshold is reached.
+- **Limit text counts as a usage stop.** An agent that returns only limit text (for example "You've hit your 5-hour limit") instead of a report now stops the ladder as `USAGE_LIMIT`.
+
 ## [1.0.0] - 2026-10-29
 
 First public release. Earlier development history was squashed into this version.

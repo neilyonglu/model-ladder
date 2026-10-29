@@ -6,6 +6,12 @@ model-ladder 的所有重要變更。版本遵循 [semantic versioning](https://
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-10-29
+
+- **用量上限時一次停止所有 run。** 用量達 `usageGuard` 門檻，或 Claude 的訂閱硬上限讓 agent 停下時，不再等目前的 agent 跑完。model-ladder 會強制停止這台機器上其他所有 model-ladder run（包括其 Codex 子程序），並為每個被停止的 run 寫出含 Stopped 段落的 `.model-ladder/HANDOFF.md`。也可用 `node scripts/usage-guard.mjs --enforce` 從命令列執行。
+- **Codex 在 agent 執行中也會檢查用量。** Codex runner 每 2 秒檢查一次用量，一達門檻就中斷正在執行的 Codex 子程序或驗證指令。
+- **上限訊息視為用量停止。** agent 沒有回報、只回傳上限訊息（例如 "You've hit your 5-hour limit"）時，ladder 會以 `USAGE_LIMIT` 停止。
+
 ## [1.0.0] - 2026-10-29
 
 第一個公開版本。先前的開發歷史已合併進這個版本。
