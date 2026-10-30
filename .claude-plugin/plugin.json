@@ -1,6 +1,6 @@
 {
   "name": "model-ladder",
-  "version": "1.0.3",
+  "version": "1.1.0",
   "description": "Run a coding task on the cheapest model and effort likely to succeed, verify it, and escalate on failure.",
   "author": {
     "name": "usio0108"
@@ -12,7 +12,7 @@
   "userConfig": {
     "autoRun": {
       "type": "boolean",
-      "title": "Use the ladder by default (v1.0.3)",
+      "title": "Use the ladder by default (v1.1.0)",
       "description": "Run coding tasks through the ladder by default.",
       "default": true
     },
@@ -40,13 +40,6 @@
       "description": "Handle small tasks directly above this %. off = disabled.",
       "default": "30",
       "options": ["20", "30", "40", "50", "60", "70", "80", "off"]
-    },
-    "split_minutes": {
-      "type": "string",
-      "title": "Split suggestion (minutes)",
-      "description": "Suggest splitting tasks above this duration. off = disabled.",
-      "default": "20",
-      "options": ["10", "20", "30", "45", "60", "off"]
     }
   }
 }

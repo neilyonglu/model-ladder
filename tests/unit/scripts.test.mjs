@@ -6,12 +6,13 @@ import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { after, test } from 'node:test'
 import { fileURLToPath } from 'node:url'
+import { artifactDir } from '../../scripts/common.mjs'
 
 const script = (name) => fileURLToPath(new URL(`../../scripts/${name}.mjs`, import.meta.url))
 const dirs = []
 // The usage guard is on by default: an empty Claude config dir keeps this machine's real usage out of every test.
 process.env.CLAUDE_CONFIG_DIR = mkdtempSync(join(tmpdir(), 'ml-no-usage-'))
-after(() => dirs.forEach((d) => rmSync(d, { recursive: true, force: true })))
+after(() => dirs.forEach((d) => { rmSync(artifactDir(d), { recursive: true, force: true }); rmSync(d, { recursive: true, force: true }) }))
 
 const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim()
 const read = (dir, file) => readFileSync(join(dir, file), 'utf8')
@@ -184,7 +185,7 @@ test('skill instructions are plugin options (the default for every project) that
     assert.equal(options[key].default, '')
   }
   const skill = read(root, 'skills/run/SKILL.md')
-  assert.match(skill, /preflight\.mjs" --plugin-options <<'EOF'\n\{ "worker_skills": "\$\{user_config\.worker_skills\}", "verifier_skills": "\$\{user_config\.verifier_skills\}", "direct_threshold": "\$\{user_config\.direct_threshold\}", "split_minutes": "\$\{user_config\.split_minutes\}" \}\nEOF/)
+  assert.match(skill, /preflight\.mjs" --plugin-options <<'EOF'\n\{ "task": "<task>", "worker_skills": "\$\{user_config\.worker_skills\}", "verifier_skills": "\$\{user_config\.verifier_skills\}", "direct_threshold": "\$\{user_config\.direct_threshold\}" \}\nEOF/)
   assert.match(skill, /"contextTokens": <estimate>, "contextWindow": <window>/)
   assert.match(read(root, 'hooks/band/register.tsx'), /pluginLayer\(options\)/)
 })
@@ -225,30 +226,15 @@ test('direct_threshold: plugin picker, default 30, project overrides, bad value 
   assert.match(bad.message, /direct_threshold must be/)
 })
 
-test('split_minutes: plugin picker, default 20, project overrides, bad value is an ERROR', () => {
+test('preflight enables measured workflow boundaries and removes the split option', () => {
   const root = fileURLToPath(new URL('../../', import.meta.url))
-  const opt = JSON.parse(read(root, '.claude-plugin/plugin.json')).userConfig.split_minutes
-  assert.equal(opt.type, 'string')
-  assert.deepEqual(opt.options, ['10', '20', '30', '45', '60', 'off'])
-  assert.equal(opt.default, '20')
-  assert.equal('enum' in opt, false)
+  assert.equal(JSON.parse(read(root, '.claude-plugin/plugin.json')).userConfig.split_minutes, undefined)
   const dir = repo()
-  assert.equal(preflight(dir).workflowArgs.splitMinutes, 20)
-  assert.equal(withOptions(dir, { split_minutes: '45' }).workflowArgs.splitMinutes, 45)
-  assert.equal(withOptions(dir, { split_minutes: 'off' }).workflowArgs.splitMinutes, 'off')
-  assert.equal(withOptions(dir, { split_minutes: '${user_config.split_minutes}' }).workflowArgs.splitMinutes, 20)
-  write(dir, '.claude/model-ladder.json', JSON.stringify({ split_minutes: 60 }))
-  git(dir, 'add', '-A')
-  git(dir, 'commit', '-q', '-m', 'sm')
-  assert.equal(withOptions(dir, { split_minutes: '10' }).workflowArgs.splitMinutes, 60)
-  for (const value of ['soon', 0, -5, true]) {
-    write(dir, '.claude/model-ladder.json', JSON.stringify({ split_minutes: value }))
-    git(dir, 'add', '-A')
-    git(dir, 'commit', '-q', '-m', 'bad')
-    const bad = preflight(dir)
-    assert.equal(bad.status, 'ERROR', String(value))
-    assert.match(bad.message, /split_minutes must be/)
-  }
+  const out = preflight(dir)
+  assert.equal(out.status, 'READY')
+  assert.equal(out.workflowArgs.telemetry, true)
+  assert.equal(out.workflowArgs.splitMinutes, undefined)
+  assert.equal(withOptions(dir, { split_minutes: 'obsolete' }).status, 'READY')
 })
 
 test('plugin options that are not JSON are an ERROR that says how to fix them, before any marker', () => {
@@ -318,7 +304,7 @@ test('dirty run: the user change stays, the patch carries only the worker change
   finish(dir, { task: 'fix b', runId: out.runId, result: verified(wt, ['b.py']) })
   assert.equal(read(dir, 'a.py'), 'a = 2\n')
   assert.equal(read(dir, 'b.py'), 'b = 2\n')
-  assert.ok(!existsSync(join(dir, '.model-ladder', 'runs', out.runId)), 'state, setup patch and index removed')
+  assert.ok(!existsSync(join(artifactDir(dir), out.runId)), 'state, setup patch and index removed')
 })
 
 test('commit: true commits only the patch files', () => {
@@ -344,8 +330,24 @@ test('a conflicting apply keeps the winning worktree and the patch', () => {
   assert.match(report, /not applied: the patch does not apply cleanly/)
   assert.equal(read(dir, 'b.py'), 'b = 99\n')
   assert.ok(existsSync(wt))
-  assert.ok(existsSync(join(dir, '.model-ladder', 'runs', runId, 'result.patch')))
+  assert.ok(existsSync(join(artifactDir(dir), runId, 'result.patch')))
+  const forecast = JSON.parse(read(dir, '.model-ladder/history.jsonl').trim()).forecast
+  assert.equal(forecast.actual.status, 'CONFLICT')
+  assert.equal(forecast.actual.censored, true)
   assert.deepEqual(locks(dir), [])
+})
+
+test('finish can close an existing run whose state predates the temp-directory migration', () => {
+  const dir = repo()
+  const { runId } = preflight(dir)
+  const current = join(artifactDir(dir), runId)
+  write(dir, `.model-ladder/runs/${runId}/state.json`, readFileSync(join(current, 'state.json'), 'utf8'))
+  rmSync(current, { recursive: true, force: true })
+  finish(dir, { task: 'old run', runId, aborted: 'stop' })
+  assert.deepEqual(locks(dir), [])
+  assert.ok(!existsSync(join(dir, '.model-ladder/runs', runId)))
+  const row = JSON.parse(read(dir, '.model-ladder/history.jsonl').trim())
+  assert.equal(row.forecast.actual.censored, true)
 })
 
 test('FAILED: worktrees removed, kept only with keepFailed', () => {
@@ -414,6 +416,39 @@ test('claim: separate scopes run side by side; an overlap asks to wait; a gone r
   assert.ok(!existsSync(lockFile(dir, b.runId)))
   assert.ok(existsSync(lockFile(dir, a.runId)))
   assert.equal(claim(dir, { runId: 'claude-missing', scope: [] }).status, 'ERROR')
+})
+
+const phase = (dir, ...args) => JSON.parse(execFileSync('node', [script('phase'), ...args], { cwd: dir, encoding: 'utf8' }))
+const lockOf = (dir, runId) => JSON.parse(readFileSync(lockFile(dir, runId), 'utf8'))
+
+test('the lock carries the task and phase: preflight, then claimed, then what phase.mjs sets', () => {
+  const dir = repo()
+  const { runId } = withOptions(dir, { task: '  fix the login bug \n', worker_skills: '' })
+  assert.deepEqual([lockOf(dir, runId).task, lockOf(dir, runId).phase], ['fix the login bug', 'preflight'])
+  assert.equal(preflight(dir).status, 'READY', 'no task on stdin still runs')
+  assert.equal(claim(dir, { runId, scope: ['a.py'], readOnly: false }).status, 'READY')
+  assert.equal(lockOf(dir, runId).phase, 'claimed')
+  assert.deepEqual(lockOf(dir, runId).scope, ['a.py'])
+
+  // From a subfolder too: phase.mjs finds the repo root's lock.
+  mkdirSync(join(dir, 'sub'), { recursive: true })
+  const before = lockOf(dir, runId)
+  for (const value of ['needs-input', 'awaiting-finish']) {
+    assert.deepEqual(phase(join(dir, 'sub'), runId, value), { status: 'OK', phase: value })
+    assert.deepEqual(lockOf(dir, runId), { ...before, phase: value }, 'only the phase changes')
+  }
+  assert.ok(!existsSync(join(dir, 'sub', '.model-ladder')))
+
+  assert.equal(phase(dir, runId, 'bogus').status, 'ERROR')
+  assert.equal(lockOf(dir, runId).phase, 'awaiting-finish')
+  assert.equal(phase(dir, 'claude-missing', 'needs-input').status, 'ERROR')
+  assert.equal(phase(dir, '../escape', 'needs-input').status, 'ERROR')
+  assert.equal(phase(dir).status, 'ERROR')
+  assert.ok(!existsSync(lockFile(dir, 'claude-missing')), 'never creates a lock')
+
+  finish(dir, { task: 'fix the login bug', runId, aborted: 'test' })
+  assert.ok(!existsSync(lockFile(dir, runId)))
+  assert.equal(phase(dir, runId, 'needs-input').status, 'ERROR', 'a finished run has no phase')
 })
 
 test('finish leaves worktrees another active run may own, and the worktrees earlier runs kept', () => {

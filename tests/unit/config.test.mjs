@@ -76,6 +76,16 @@ test('project instructions select exact repo names and preserve unprefixed rules
   assert.equal(projectSkills({ worker_skills: 3 }, '/repos/model-ladder').worker_skills, 3, 'invalid types still reach validation')
 })
 
+test('project instructions: a colon inside a sentence or a bare plugin:skill line stays global', () => {
+  const config = {
+    worker_skills: 'When coding, use ponytail:ponytail.\nponytail:ponytail\nmodel-ladder: use plugin:skill',
+  }
+  assert.equal(projectSkills(config, '/repos/model-ladder').worker_skills,
+    'When coding, use ponytail:ponytail.\nponytail:ponytail\nuse plugin:skill', 'folder match keeps only its own rule')
+  assert.equal(projectSkills(config, '/repos/other').worker_skills,
+    'When coding, use ponytail:ponytail.\nponytail:ponytail', 'other repos keep the global lines only')
+})
+
 test('both runtimes filter merged instructions using the main repo name, including linked worktrees', () => {
   const user = freshUserConfig()
   const repo = tmp()
@@ -122,6 +132,9 @@ test('band: the threshold save and switch go through setGuard into the user file
   assert.doesNotMatch(band, /enabled: true, threshold/)
   assert.doesNotMatch(band, /fs\.write\(await projectPath/)
   assert.equal(band.match(/\$\.fs\.write\(/g).length, 4, 'usage.json, context.json, HANDOFF.md and the user settings file only')
+  // .model-ladder state goes to the repo root, never to a subfolder the shell sits in.
+  assert.equal(band.match(/\$\{await repoRootOf\(\$\)\}\/\.model-ladder/g)?.length, 4, 'context.json, usage.json, HANDOFF.md and the run locks')
+  assert.doesNotMatch(band, /\$\{await \$\.session\.cwd\(\)\}\/\.model-ladder/)
 })
 
 test('Claude Code settings read ~/.claude/model-ladder.json between the defaults and the project', () => {
@@ -153,22 +166,9 @@ test('direct_threshold layers: default, user file, project file, plugin option',
   freshUserConfig()
 })
 
-test('split_minutes layers: default, user file, project file, plugin option', () => {
-  const user = freshUserConfig()
-  const repo = tmp()
-  assert.equal(loadClaude(repo).config.split_minutes, 20)
-  writeJson(user, { split_minutes: 30 })
-  assert.equal(loadClaude(repo).config.split_minutes, 30)
-  assert.equal(loadClaude(repo, { split_minutes: '45' }).config.split_minutes, 45)
-  writeJson(join(repo, '.claude/model-ladder.json'), { split_minutes: 'off' })
-  assert.equal(loadClaude(repo, { split_minutes: '45' }).config.split_minutes, 'off')
-  assert.deepEqual(loadClaude(repo).problems, [])
-  assert.deepEqual(pluginLayer({ split_minutes: '60' }), { split_minutes: 60 })
-  assert.deepEqual(pluginLayer({ split_minutes: 'off' }), { split_minutes: 'off' })
-  assert.deepEqual(pluginLayer({ split_minutes: '${user_config.split_minutes}' }), {})
-  writeJson(join(repo, '.claude/model-ladder.json'), { split_minutes: 'later' })
-  assert.match(loadClaude(repo).problems.join(';'), /split_minutes must be/)
-  freshUserConfig()
+test('obsolete split plugin options are ignored', () => {
+  assert.deepEqual(pluginLayer({ split_minutes: '60' }), {})
+  assert.equal(loadClaude(tmp()).config.split_minutes, undefined)
 })
 
 test('Codex tolerates split_minutes in its settings', () => {

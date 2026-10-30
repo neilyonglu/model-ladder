@@ -8,6 +8,8 @@ export type Row = {
   status: 'running' | 'done'
   ms: number | null
   startedAt: number
+  // The run's expected total duration from its forecast, or null when unknown.
+  expectedMs: number | null
 }
 
 declare module 'claude-code' {

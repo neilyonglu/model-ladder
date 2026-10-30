@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, after } from 'node:test'
 import { readCodexUsage } from '../../scripts/codex-usage.mjs'
+import { usageSnapshot } from '../../scripts/forecast.mjs'
 
 const dirs = []
 after(() => dirs.forEach((dir) => rmSync(dir, { recursive: true, force: true })))
@@ -49,4 +50,28 @@ test('panel usage includes the reset timestamp of each labelled window on reques
   const dir = home()
   session(dir, 'a.jsonl', [event({ used_percent: 15, resets_at: future, window_minutes: 300 }, null)], 1000)
   assert.deepEqual(readCodexUsage(dir, undefined, { details: true, resets: true }), { fiveHour: 15, sevenDay: null, fiveHourResetsAt: future, sevenDayResetsAt: null })
+})
+
+test('forecast evidence retains sample time, source and every subscription window without changing the guard', () => {
+  const dir = home()
+  const raw = JSON.parse(event({ used_percent: 15, resets_at: future, window_minutes: 300 }, { used_percent: 8, resets_at: future, window_minutes: 60 }))
+  raw.timestamp = '2026-10-29T10:00:00.000Z'
+  session(dir, 'evidence.jsonl', [JSON.stringify(raw)], 1000)
+  const evidence = readCodexUsage(dir, undefined, { evidence: true })
+  assert.equal(evidence.sampledAt, Date.parse(raw.timestamp))
+  assert.equal(evidence.windows.five_hour.used, 15)
+  assert.equal(evidence.windows['60_minutes'].resetsAt, future * 1000)
+  assert.match(evidence.source, /evidence.jsonl$/)
+  assert.equal(readCodexUsage(dir), 15)
+  delete raw.timestamp
+  session(dir, 'missing-time.jsonl', [JSON.stringify(raw)], 2000)
+  assert.equal(readCodexUsage(dir, undefined, { evidence: true }).sampledAt, null)
+})
+
+test('Claude forecast reads additional subscription windows from the existing usage cache', () => {
+  const dir = home(), now = Date.now()
+  mkdirSync(join(dir, '.model-ladder'), { recursive: true })
+  writeFileSync(join(dir, '.model-ladder/usage.json'), JSON.stringify({ updatedAt: now / 1000, daily: { used_percentage: 12, resets_at: now / 1000 + 3600 } }))
+  assert.equal(usageSnapshot(dir, 'claude', now).windows.daily.used, 12)
+  assert.equal(usageSnapshot(dir, 'claude', now + 900001).sampledAt, null)
 })

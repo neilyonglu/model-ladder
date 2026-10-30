@@ -6,6 +6,16 @@
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-10-30
+
+- 耗時預估：耗時範圍、階段計時與各用量時間窗的餘額評估記錄於 live、result、history JSON，並以可比較的成功紀錄校準；移除拆分詢問。
+- Claude Code band 與 Codex 面板的時間欄顯示「經過/預估」（例如 `5s/12m`），沒有預估時只顯示經過時間。
+- 開跑預估顯示某個用量時間窗不足或有風險時，Claude Code 與 Codex 會在 worker 開始前詢問一次（`acceptUsageRisk: true` 為繼續）；用量保護照常生效。
+- 主 session 在 agent 之間持有 run 時（preflight、詢問、finish），Claude Code band 顯示 `no model` 列，不再顯示 `idle`。
+- band 將 `.model-ladder` 狀態寫到 repo 根目錄，不再寫到 shell 目前所在的子資料夾。
+- Codex 用量保護在角色執行期間可讀到即時用量；即使 stderr 有 sandbox 警告，Codex 用量上限錯誤也會寫出 `HANDOFF.md`。
+- 像 `use ponytail:ponytail` 這類含冒號的行維持全域；只有 `專案名稱: ` 前綴才會限定角色指示。
+
 ## [1.0.3] - 2026-10-30
 
 - 支援 `專案名稱: 指示` 限定角色指示，無前綴的行維持全域適用。

@@ -14,7 +14,7 @@ assert.equal(process.env.MODEL_LADDER_AUTORUN, '0')
 const schema = JSON.parse(readFileSync(arg('--output-schema'), 'utf8'))
 assert.equal(schema.additionalProperties, false)
 assert.deepEqual(schema.required, Object.keys(schema.properties))
-assert.ok(args.includes('--ephemeral'))
+assert.ok(!args.includes('--ephemeral'))
 assert.ok(args.includes('--json'))
 assert.equal(args.at(-1), '-')
 assert.match(arg('-c'), /^model_reasoning_effort=/)
@@ -25,10 +25,17 @@ mkdirSync(join(root, '.model-ladder'), {recursive:true})
 appendFileSync(log, JSON.stringify({phase,cwd,model:arg('-m'),effort:arg('-c'),sandbox:arg('--sandbox'),prompt}) + '\n')
 const calls = readFileSync(log,'utf8').trim().split('\n').map(JSON.parse)
 const number = calls.filter((call) => call.phase === 'worker').length
+if (scenario.environment === phase && scenario.limitEvent) {
+  console.error('WARN codex_sandboxing::violation: recorded sandbox violation backend=windows_sandbox')
+  const message = 'You’ve hit your usage limit. Try again in 3 hours.'
+  console.log(JSON.stringify({ type: 'error', message }))
+  console.log(JSON.stringify({ type: 'turn.failed', error: { message } }))
+  process.exit(1)
+}
 if (scenario.environment === phase) { console.error(scenario.environmentMessage ?? 'model unsupported or sandbox permission denied'); process.exit(1) }
 if (scenario.warning) console.error('sandbox initialized normally')
 let output
-if (phase === 'route') output = {model:scenario.invalidStart ? 'no-model' : 'cheap',effort:'low',reason:'small task',goal:'Fix greeting',scope:['greeting.mjs'],allowTests:scenario.allowTests ?? false,readOnly:scenario.readOnly ?? false,question:scenario.question ?? null,estimatedMinutes:scenario.estimatedMinutes ?? 5,split:scenario.split ?? []}
+if (phase === 'route') output = {model:scenario.invalidStart ? 'no-model' : 'cheap',effort:'low',reason:'small task',goal:'Fix greeting',scope:['greeting.mjs'],allowTests:scenario.allowTests ?? false,readOnly:scenario.readOnly ?? false,question:scenario.question ?? null,estimatedMinutes:scenario.estimatedMinutes ?? 5,optimisticMinutes:scenario.optimisticMinutes ?? scenario.estimatedMinutes ?? 5,pessimisticMinutes:scenario.pessimisticMinutes ?? scenario.estimatedMinutes ?? 5}
 if (phase === 'worker') {
   for (const [file, value] of Object.entries(scenario.expectWorkerFiles ?? {})) {
     if (number > 1) assert.equal(readFileSync(join(cwd, file), 'utf8'), value)

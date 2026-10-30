@@ -74,7 +74,7 @@ Pruning removes completed artifacts but preserves active runs, conflicts, patche
 | DIRECT | Supply actual `contextTokens` and `contextWindow`; the router must also judge the task small. |
 | Complete DIRECT | Edit only the returned `worktreePath`, then resubmit the original input with `directRun` and `directSummary`. |
 | Force normal ladder | Use `forceLadder: true`, which also disables split suggestions. |
-| Run a large task whole | Use `acceptSplit: false` after choosing that option. |
+| Run a large task | No split confirmation is required; if the forecast says usage may run out, answer the usage-risk question (`acceptUsageRisk: true` continues). |
 | Commit | Explicitly enable `commit: true` to commit verified files without unrelated staged changes. |
 | Resume a timeout | Reuse the original input and returned `resumeRun`; the skill retries automatically at most twice. |
 
@@ -104,7 +104,6 @@ Personal files are `~/.claude/model-ladder.json` and `~/.codex/model-ladder.json
 | `usageGuard` | Enabled, `90%` | Usage protection, preferably stored in the personal file. |
 | `worker_skills` / `verifier_skills` | Empty | Natural-language role instructions. |
 | `direct_threshold` | `30` | Context percentage for small-task DIRECT, or `"off"`. |
-| `split_minutes` | `20` | Duration above which splitting is suggested, or `"off"`. |
 | `autoRun` / `band` | `true` | Default routing and display controls. |
 
 Claude model aliases follow available versions; configure Codex model IDs and efforts for your account.
@@ -121,7 +120,7 @@ Without explicit `verify`, Codex prefers a project verify skill, then discovers 
 | `MODEL_LADDER_NO_UPDATE_CHECK=1` | Disable version checks. |
 
 Claude plugin role instructions provide defaults that project keys override, including an explicit empty string.
-Use one rule per line: `model-ladder: use plugin:skill` applies only when the main repo folder is exactly `model-ladder`; lines without a colon apply globally.
+Use one rule per line: `model-ladder: use plugin:skill` applies only when the main repo folder is exactly `model-ladder`; lines without a `project: ` prefix apply globally, including ones with a colon such as `use ponytail:ponytail`.
 The first colon separates the project name; matching bodies retain later colons, and empty or unresolved `${...}` values add no instructions.
 Unavailable capabilities are reported before execution and in the final report, for example: `ponytail` is not available in this project.
 Role instructions may name skills, plugins, slash commands, or MCP servers, but cannot expand permissions, permit verifier edits, or recurse into the ladder.
@@ -166,3 +165,34 @@ Claude usage comes from the Band or `scripts/usage-statusline.mjs`; only Pro/Max
 The main session adds the goal, decisions, completed work, next steps, and resume instructions above the unchanged generated verification appendix, which remains authoritative.
 If the session cannot call a model, keep the template as the fallback.
 A force-killed run may lack a checkpoint or `result.json`; inspect its draft and restart the original task after quota reset instead of inventing `resumeRun`.
+
+Duration forecasts are stored in live/result/history JSON; the panel time column shows elapsed/expected (most-likely total).
+They cover routing, implementation and self-checks, test commands, independent
+verification and retry risk. Router ranges are uncalibrated judgments until
+comparable successful histories supply empirical min/median/max error ratios.
+Those ranges are observations, not confidence intervals or accuracy claims.
+Original forecasts, boundary updates, phase models, efforts, tokens and clock timings,
+actual elapsed time and signed/absolute error remain in history. Interrupted,
+DIRECT, errored and aborted runs are censored; failed runs are retained but never
+used as successful calibration evidence. Comparability requires the same runtime,
+starting cell, router, verifier, verification command, attempt limit, router estimate and task mode;
+only the last 90 days are used. Continuations use separate histories and retain
+the earlier original forecast. Without comparable continuation data, their bounds
+remain unknown.
+
+Usage is assessed separately for each available subscription window, against both
+100% headroom and the enabled guard threshold. Minutes and tokens never convert to
+subscription percentages. Evidence needs fresh before/after samples, the same
+source, account identity and reset, nondecreasing percentages and attributable
+exclusive account activity. Boundary checks conservatively compare full-run
+consumption with current headroom. They do not assume a linear consumption rate.
+The current providers cannot prove absence of other account activity,
+so their observations normally yield unknown with reasons. Missing timestamps,
+stale samples, resets, incomplete and failed runs cannot establish sufficiency.
+Estimates do not bypass or replace the existing live usage guard.
+
+Claude records wall-clock boundaries through the Node forecast recorder around
+each Workflow call; the workflow itself reads no clock and imports nothing. A
+structured journal continues one agent at a time without repeating model calls.
+These timings include host overhead and gaps inside each call; preflight-to-finish
+elapsed time includes user/host waits. Open boundaries are censored on errors.

@@ -59,11 +59,16 @@ export function renderLive(state, { width = 80, now = Date.now(), guard = { enab
   }
   const lines = [`▴ ${dot}model-ladder ── ${window('fiveHour', '5h')} · ${window('sevenDay', '7d')}${idle ? ' · idle' : ''}`]
   const modelWidth = Math.min(32, Math.max(12, ...agents.map((a) => displayWidth(`${a.model}/${a.effort}`))))
-  lines.push(`${pad('model/effort', modelWidth)}  ${pad('time', 9)}  task`)
-  for (const agent of agents) {
+  // Elapsed, then "/" and the run's expected total (agent.expectedMs, taken from live.forecast when the row started).
+  const times = agents.map((agent) => {
     const seconds = Math.max(0, Math.floor(((agent.endedAt ? Date.parse(agent.endedAt) : now) - Date.parse(agent.startedAt)) / 1000))
-    const time = `${agent.endedAt ? agent.pass === false ? '✗ ' : '✓ ' : ''}${seconds}s`
-    const prefix = `${pad(`${agent.model}/${agent.effort}`, modelWidth)}  ${pad(time, 9)}  `
+    const expected = Number.isFinite(agent.expectedMs) && agent.expectedMs > 0 ? `/${roundSpan(agent.expectedMs)}` : ''
+    return `${agent.endedAt ? agent.pass === false ? '✗ ' : '✓ ' : ''}${seconds}s${expected}`
+  })
+  const timeWidth = Math.max(12, ...times.map(displayWidth))
+  lines.push(`${pad('model/effort', modelWidth)}  ${pad('time', timeWidth)}  task`)
+  for (const [i, agent] of agents.entries()) {
+    const prefix = `${pad(`${agent.model}/${agent.effort}`, modelWidth)}  ${pad(times[i], timeWidth)}  `
     lines.push(prefix + truncate(`${agent.phase}: ${agent.task}`, Math.max(0, width - displayWidth(prefix))))
   }
   const withs = Object.entries(state?.skills ?? {}).filter(([, skills]) => skills?.trim()).map(([role, skills]) => `${role} ${skills}`)

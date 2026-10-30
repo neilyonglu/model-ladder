@@ -24,14 +24,12 @@ export function userConfigPath(runtime, env, home) {
 // Claude Code leaves a plugin option it did not fill in as the literal "${user_config.x}": that is unset.
 export const resolved = (value) => (typeof value === 'string' && !value.includes('${') ? value : undefined)
 
-// The plugin's worker_skills / verifier_skills / direct_threshold / split_minutes options are the user's defaults for every project. They join the
+// The plugin's worker_skills / verifier_skills / direct_threshold options are the user's defaults for every project. They join the
 // user layer, so a project file with the same key (even an empty one) wins.
 export function pluginLayer(options = {}) {
   const layer = {}
   const direct = resolved(options.direct_threshold)
   if (direct !== undefined) layer.direct_threshold = /^\d+(?:\.\d+)?$/.test(direct) ? Number(direct) : direct
-  const split = resolved(options.split_minutes)
-  if (split !== undefined) layer.split_minutes = /^\d+(?:\.\d+)?$/.test(split) ? Number(split) : split
   for (const key of ['worker_skills', 'verifier_skills']) {
     const value = resolved(options[key])
     if (value !== undefined) layer[key] = value
@@ -39,16 +37,18 @@ export function pluginLayer(options = {}) {
   return layer
 }
 
-// One rule per line: project: instruction. Unprefixed lines remain global.
+// One rule per line: project: instruction. A line is project-scoped only when it starts with a name (no whitespace, no colon),
+// a colon and at least one whitespace character; every other line, such as "use ponytail:ponytail", stays global.
+const PROJECT_PREFIX = /^\s*([^\s:]+):\s/
 export function projectSkills(config, root) {
   const project = root?.replace(/[\\/]+$/, '').split(/[\\/]/).at(-1)
   const skills = {}
   for (const key of ['worker_skills', 'verifier_skills']) {
     if (typeof config[key] !== 'string') continue
     skills[key] = config[key].split(/\r?\n/).flatMap((line) => {
-      const colon = line.indexOf(':')
-      if (colon < 0) return [line]
-      return line.slice(0, colon).trim() === project ? [line.slice(colon + 1).trimStart()] : []
+      const prefix = PROJECT_PREFIX.exec(line)
+      if (!prefix) return [line]
+      return prefix[1] === project ? [line.slice(prefix[0].length).trimStart()] : []
     }).join('\n')
   }
   return { ...config, ...skills }

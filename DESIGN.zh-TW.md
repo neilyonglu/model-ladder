@@ -35,7 +35,7 @@ Claude Code 使用 Workflow，Codex 使用獨立 Node runner。
 | 主 session | 處理詢問、DIRECT、摘要與交接情境。 |
 
 Claude Router 僅有 Read、Grep、Glob；worker 與 verifier 繼承可用工具但禁用 Workflow、Agent，且 verifier 不得寫檔。
-Codex 角色使用明確模型、schema、暫時 session，以及既有 sandbox 與核准控制。
+Codex 角色使用明確模型、schema、保留 rollout 以取得用量取樣，以及既有 sandbox 與核准控制。
 
 ```text
 檢查 -> snapshot -> 路由 -> 認領範圍 -> worker -> verifier -> 套用
@@ -110,7 +110,7 @@ Hook 屬提前防護，Node 不可用時放行，最終 diff 檢查仍執行保�
 | DIRECT | 小任務且實測 context 達 `direct_threshold`，路由決定本身不等於通過驗證。 |
 | Claude DIRECT | 主 session 修改後交獨立 verifier，最多三輪修正。 |
 | Codex DIRECT | 呼叫端修改隔離草稿，`directRun` 再認領範圍、核對基線、驗證及套用。 |
-| 拆分 | 超過 `split_minutes` 時，由使用者選依序分段、整體執行或停止。 |
+| 預估 | 耗時範圍、階段實際計時與各用量時間窗的餘額評估；面板顯示經過/預估；時間窗不足或有風險時在 worker 前確認一次；不要求拆分確認。 |
 | 強制 ladder | `forceLadder` 停用 DIRECT 與拆分建議。 |
 | 逾時 | `timeoutMs` 限制沒有輸出的閒置時間。 |
 | Codex 續跑 | 核對 checkout、任務、驗收與設定，再以新 worktree 延續草稿。 |

@@ -22,7 +22,7 @@ model-ladder 是 [Claude Code](https://code.claude.com) 與 Codex 的外掛。Ro
 - **隔離的 Git worktree**：每次嘗試各自在獨立 worktree 中執行。
 - **適時升級**：驗證失敗時，可能改用更強的模型或提高 effort。
 - **小任務 DIRECT**：實際 session context 達到設定門檻時，由主 session 處理小任務，完成後仍須獨立驗證。
-- **拆分建議**：預估超過 `split_minutes` 的任務，可選擇分段執行、整體執行或停止。
+- **預估資訊**：面板時間欄顯示「經過/預估」（例如 `5s/12m`）；開跑時若預估某個用量時間窗不足或有風險，會在 worker 開始前詢問一次；大型任務不再要求拆分確認。
 - **使用量保護**：偵測到用量停止條件時結束目前 run 並強制停止同機其他已註冊 run。
 - **交接文件**：用量停止或執行 `/model-ladder:handoff` 時建立 `.model-ladder/HANDOFF.md`，由主 session 根據對話改寫，並保留程式產生的驗證附錄。
 - **Band / panel / HUD**：透過 Claude band 或 Codex 終端顯示查看角色、用量與保護控制，Claude 另顯示 context token 與百分比。
@@ -61,7 +61,7 @@ codex plugin add model-ladder@model-ladder
 5. **回應詢問**：確認是否處理未提交變更、補充不清楚的任務，並在拆分建議出現時選擇分段、整體執行或停止。
 6. **查看結果**：通過驗證才算完成，報告會列出修改檔案、驗證結果與剩餘限制，預設不 commit 或 push。
 7. **交接與續跑**：需要時可要求建立交接文件，遇到用量停止則等額度重設，再依 `.model-ladder/HANDOFF.md` 續跑。
-8. **建立驗證方式**：請 agent 使用 `create-verification-skill` 建立驗證流程，再以 `maintain-verification-skill` 維護。
+8. **建立專案驗證流程**：model-ladder 內建源自 pstack 的 [`create-verification-skill`](skills/create-verification-skill/SKILL.md) 與 [`maintain-verification-skill`](skills/maintain-verification-skill/SKILL.md)，Codex plugin 也附有[對應版本](codex-skills/)。在 Claude Code 執行 `/model-ladder:create-verification-skill` 或 `/model-ladder:maintain-verification-skill`；在 Codex 請它使用 `create-verification-skill` 或 `maintain-verification-skill` skill。這些 skill 會為目標專案建立或維護專屬驗證 driver。本 repository 已有自己的 [`.agents/skills/verify/SKILL.md`](.agents/skills/verify/SKILL.md)，用途是驗證 model-ladder，不是替任意專案建立通用 driver。來源與授權請見[第三方 notice](NOTICE.zh-TW.md)。
 
 報告範例、runner 指令、並行執行與執行檔案位置見[進階使用](USAGE.zh-TW.md)，panel 操作見 [Band](#bandclaude-code)。
 
@@ -79,12 +79,11 @@ Claude 若需在外掛介面以外設定，使用 `~/.claude/model-ladder.json`�
 | `worker_skills`（**Worker skill instructions**） | 空白 | 指定 worker 與 test-writer 使用的 skills 或工具。 |
 | `verifier_skills`（**Verifier skill instructions**） | 空白 | 指定驗證時使用的 skills 或工具。 |
 | `direct_threshold` | `30` | 小任務使用 DIRECT 的 context 百分比門檻，`off` 停用。 |
-| `split_minutes` | `20` | 預估超過此分鐘數時建議拆分，`off` 停用。 |
 | `usageGuard` | 開啟、`90%` | 達到設定的用量門檻時停止。 |
 
 專案的 `.claude/model-ladder.json` 或 `.codex/model-ladder.json` 優先於個人設定，使用量保護建議放個人檔，除非專案需要覆寫。
 
-角色指示每行一條，`專案名稱: 指示` 只套用主 repo 資料夾名稱完全一致的專案，無前綴則全域適用。
+角色指示每行一條，`專案名稱: 指示` 只套用主 repo 資料夾名稱完全一致的專案，沒有 `專案名稱: ` 前綴則全域適用。
 
 ```json
 {

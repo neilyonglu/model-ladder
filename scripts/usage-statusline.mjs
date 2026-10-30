@@ -34,11 +34,12 @@ function statusline(input) {
   try { data = JSON.parse(input) } catch { return '' }
   const five = win(data?.rate_limits?.five_hour)
   const seven = win(data?.rate_limits?.seven_day)
-  if (!five && !seven) return ''
+  const windows = Object.fromEntries(Object.entries(data?.rate_limits ?? {}).map(([key, value]) => [key, win(value)]).filter(([, value]) => value))
+  if (!Object.keys(windows).length) return ''
   try {
     const file = usageFile()
     mkdirSync(dirname(file), { recursive: true })
-    writeFileSync(file, JSON.stringify({ five_hour: five, seven_day: seven, updatedAt: Math.floor(Date.now() / 1000) }))
+    writeFileSync(file, JSON.stringify({ ...windows, five_hour: five, seven_day: seven, updatedAt: Math.floor(Date.now() / 1000) }))
   } catch {}
   return [five && `5h ${Math.round(five.used_percentage)}%`, seven && `7d ${Math.round(seven.used_percentage)}%`].filter(Boolean).join(' · ')
 }

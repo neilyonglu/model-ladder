@@ -6,6 +6,16 @@ Versions follow semantic versioning; Claude Code updates require a new `.claude-
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-10-30
+
+- Duration forecasts: structured ranges, phase timings and per-window usage headroom are recorded in live, result and history JSON and calibrated from comparable successful runs; the split prompt is removed.
+- The panel time column shows elapsed/expected (for example `5s/12m`) in the Claude Code band and the Codex panel, falling back to elapsed time when no forecast exists.
+- When the startup forecast says a usage window is insufficient or at risk, Claude Code and Codex ask once before any worker starts (`acceptUsageRisk: true` continues); the usage guard still applies.
+- The Claude Code band shows a `no model` row while the main session holds a run between agents (preflight, questions, finish), instead of `idle`.
+- The band writes `.model-ladder` state at the repository root, not the shell's current subfolder.
+- The Codex usage guard now sees live usage during role processes, and Codex usage-limit errors write `HANDOFF.md` even when stderr has sandbox warnings.
+- Lines like `use ponytail:ponytail` stay global; only a `project: ` prefix scopes a role instruction.
+
 ## [1.0.3] - 2026-10-30
 
 - Scope role instructions with `project: instructions`, while unprefixed lines remain global.

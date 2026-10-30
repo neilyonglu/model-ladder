@@ -12,8 +12,6 @@ import { join } from 'node:path'
 export const runsDir = (root) => join(root, '.model-ladder', 'runs')
 export const legacyLock = (root) => join(root, '.model-ladder', 'run.json')
 export const lockPath = (root, runId) => join(runsDir(root), `${runId}.json`)
-// A Claude Code run's transient files (state.json, setup.patch, temporary index, a conflict's result.patch).
-export const runFiles = (root, runId) => join(runsDir(root), runId)
 
 export function alive(pid) {
   if (!Number.isSafeInteger(pid) || pid <= 0) return null

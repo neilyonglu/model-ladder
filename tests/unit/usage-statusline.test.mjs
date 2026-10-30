@@ -44,6 +44,14 @@ test('one window missing: still writes and prints the other', () => {
   assert.equal(JSON.parse(readFileSync(join(dir, 'model-ladder-usage.json'), 'utf8')).five_hour, null)
 })
 
+test('additional subscription windows are saved for backend assessment without changing statusline text', () => {
+  const dir = tmp()
+  const out = run(dir, JSON.stringify({ rate_limits: { five_hour: { used_percentage: 42, resets_at: 2e9 }, daily: { used_percentage: 8, resets_at: 2e9 } } }))
+  assert.equal(out.status, 0)
+  assert.equal(out.stdout.trim(), '5h 42%')
+  assert.equal(JSON.parse(readFileSync(join(dir, 'model-ladder-usage.json'), 'utf8')).daily.used_percentage, 8)
+})
+
 test('no rate_limits or non-JSON stdin: nothing written, no crash', () => {
   for (const input of [JSON.stringify({ model: 'x' }), 'not json', '']) {
     const dir = tmp()

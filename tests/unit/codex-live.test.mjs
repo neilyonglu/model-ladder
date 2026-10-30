@@ -36,6 +36,23 @@ test('completed rows freeze elapsed time and disappear at ten seconds; active ro
   assert.match(renderLive({ agents: [running] }, { now: start + 12000, guard: { enabled: false } }), /12s/)
   assert.doesNotMatch(renderLive({ agents: [running] }, { now: start + 12000, guard: { enabled: false } }), /idle|threshold/)
 })
+const NL = String.fromCharCode(10)
+test('time column shows elapsed/expected from the run forecast, freezes with the row and falls back to elapsed alone', () => {
+  const start = Date.parse('2026-10-23T00:00:00Z')
+  const agent = { phase: 'worker', model: 'luna', effort: 'low', task: 'Fix greeting', startedAt: new Date(start).toISOString(), endedAt: null, pass: null, expectedMs: 720000 }
+  const timeCell = (frame) => frame.split(NL)[2].slice(14).split('  ')[0].trim()
+  assert.equal(timeCell(renderLive({ agents: [agent] }, { now: start + 5000 })), '5s/12m')
+  const done = { ...agent, endedAt: new Date(start + 5000).toISOString(), pass: true }
+  assert.equal(timeCell(renderLive({ agents: [done] }, { now: start + 14000 })), '✓ 5s/12m')
+  assert.equal(timeCell(renderLive({ agents: [{ ...done, pass: false }] }, { now: start + 14000 })), '✗ 5s/12m')
+  for (const expectedMs of [undefined, null, 0, NaN]) assert.equal(timeCell(renderLive({ agents: [{ ...agent, expectedMs }] }, { now: start + 5000 })), '5s')
+  // The time column is wider than 9 and every line still fits the panel.
+  const long = renderLive({ agents: [{ ...agent, expectedMs: 90 * 3600000 }] }, { now: start + 100000000, width: 60 })
+  assert.equal(timeCell(long), '100000s/4d')
+  const header = long.split(NL)[1]
+  assert.ok(header.indexOf('task') - header.indexOf('time') > 9 + 2)
+  assert.ok(long.split(NL).every((line) => displayWidth(line) <= 60))
+})
 test('watch flags write the user file, preserve its other settings and leave the project file alone; every invalid threshold exits without writing', () => {
   const root = mkdtempSync(join(tmpdir(), 'ml-watch-'))
   const path = freshUserConfig()

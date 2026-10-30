@@ -18,11 +18,11 @@ Run preflight with the plugin's skill options on stdin (Manage Plugins → Confi
 
 ```sh
 node "${CLAUDE_PLUGIN_ROOT}/scripts/preflight.mjs" --plugin-options <<'EOF'
-{ "worker_skills": "${user_config.worker_skills}", "verifier_skills": "${user_config.verifier_skills}", "direct_threshold": "${user_config.direct_threshold}", "split_minutes": "${user_config.split_minutes}" }
+{ "task": "<task>", "worker_skills": "${user_config.worker_skills}", "verifier_skills": "${user_config.verifier_skills}", "direct_threshold": "${user_config.direct_threshold}" }
 EOF
 ```
 
-Copy the values exactly as they appear above, as JSON strings: escape any `"`, `\` or line break inside them (`\"`, `\\`, `\n`). A value still reading `${...}` was not filled in; leave it as it is, preflight treats it as unset. Act on `status`:
+Put the task in `task` (the lock keeps it for the band's main-session row). Copy the other values exactly as they appear above. All are JSON strings: escape any `"`, `\` or line break inside them (`\"`, `\\`, `\n`). A value still reading `${...}` was not filled in; leave it as it is, preflight treats it as unset. Act on `status`:
 
 - `ERROR`: show `message` and stop. If it says the plugin options are not valid JSON, fix the escaping and run preflight again instead.
 - `STALE_RUN`, `OVERRIDDEN`, `DIRTY`: ask the user (show `message`, or the `files` for DIRTY: "run on top of these uncommitted changes?"). On yes, rerun preflight (same `--plugin-options` input) with every flag granted so far: `--clear-stale`, `--ignore-env`, `--allow-dirty`. On no, stop.
@@ -30,6 +30,19 @@ Copy the values exactly as they appear above, as JSON strings: escape any `"`, `
 - `READY`: keep `runId` and `workflowArgs`. If `usageNote` is set, show it to the user first, then continue.
 
 Other model-ladder runs (Claude Code or Codex) may be active in the same repository. That is fine: step 2 checks that their files do not overlap with this run's.
+
+### Phase (from READY until finish)
+
+The band shows this session's phase while no ladder agent runs. Once you have a `runId`, record it in the run's lock:
+
+```sh
+node "${CLAUDE_PLUGIN_ROOT}/scripts/phase.mjs" <runId> needs-input
+```
+
+- `needs-input`: right before every question you ask the user (an acceptance, clarification or usage-risk question, an overlap or stale-run question from the claim).
+- `awaiting-finish`: right after a Workflow call returns any status other than `BOUNDARY` or `ROUTED`, or throws, while you check the result and run finish.
+
+Preflight sets `preflight` and the claim sets `claimed` by themselves. A phase `ERROR` never stops the run: carry on.
 
 ### Availability check (after preflight, before the workflow)
 
@@ -49,16 +62,31 @@ Call the Workflow tool with name `model-ladder:ladder` and args `{ "task": "<tas
 - `contextWindow`: your estimate of this session's context window size in tokens (for example 200000 or 1000000). The workflow returns DIRECT for a small task when `contextTokens / contextWindow * 100` reaches `workflowArgs.directThreshold` (`off` = never); pass `workflowArgs` unchanged.
 - `forceLadder`: true when the task starts with `--ladder`; drop that flag from the task.
 
+Preflight enables the backend timing journal. Around **every** Workflow call, including the first routing call and every continuation, run the Node boundary recorder from the main repository:
+
+```sh
+node "${CLAUDE_PLUGIN_ROOT}/scripts/forecast.mjs" <<'EOF'
+{ "runId": "<runId>", "event": "start" }
+EOF
+```
+
+Immediately after the Workflow call returns, record its result unchanged (then, unless it is `BOUNDARY` or `ROUTED`, run `phase.mjs <runId> awaiting-finish`):
+
+```sh
+node "${CLAUDE_PLUGIN_ROOT}/scripts/forecast.mjs" <<'EOF'
+{ "runId": "<runId>", "event": "end", "result": <the workflow result> }
+EOF
+```
+
+Keep the `forecast` the end recorder returns after the `ROUTED` call and pass it unchanged as `args.forecast` in every later Workflow call for this run; the workflow reads it before the first worker (see `USAGE_RISK` below). Carry the latest result's `journal` unchanged as `args.journal` into every subsequent Workflow call for this run. A `BOUNDARY` result means one agent finished: repeat with the same args plus that journal. Earlier outputs replay without calling agents. Keep the routed `plan` unchanged on execution continuations. Stop and use finish with `error` if a boundary recorder fails; never replay a failed/unrecorded call or invent timing. If the Workflow itself throws, use finish with `error`; the open boundary is censored.
+
 If it returns `status: "ROUTED"`, claim the scope (below), then call again with the same args plus `"plan": <plan>`.
 
-If it returns `status: "NEEDS_INPUT"`:
+If it returns `status: "NEEDS_INPUT"`, run `phase.mjs <runId> needs-input` before you ask:
 
-- `plan.question` is set: ask it. On an answer, call again with the task plus `\nClarification: <answer>`.
-- `plan.splitSuggestion` is set (`{ estimatedMinutes, limit, parts }`): the router estimates the task at more than `limit` minutes and proposes `parts` (each `{ task, scope }`). In the user's language, list the estimate, the limit and the parts as a numbered message, then ask which to do: split and run in order / run it whole / stop.
-  - Split: for each part in order, run this whole skill (steps 1 to 3, with its own preflight, claim and finish) on that part's `task`, and start the next part only after the previous one finished VERIFIED. If a part does not verify, stop and tell the user which parts are done. Do not run finish for the original task: each part has its own.
-  - Whole: call again with the same args plus `"acceptSplit": false`.
-  - Stop: go to step 3 with `aborted`.
+- `plan.question` is set: ask it. On an answer, finish this run with `aborted: "Task clarified; rerouting"`, then restart step 1 with the task plus `\nClarification: <answer>`. Keep previously granted preflight flags. A changed task gets a fresh journal; never replay the previous route against it.
 - `plan.needsAcceptance` is true: there is no verify step, so the user decides what done means. Print `plan.acceptanceMessage` verbatim as a message (the question box shows one flat paragraph, so the list never goes in the question). Then ask `plan.acceptanceQuestion` verbatim, nothing added, with the options run / stop; the user gives their own criteria, one per line, through Other. Claim the scope (below), then call again with the same args plus `"plan": <plan with acceptance set to their criteria>`.
+- `reason` is `USAGE_RISK`: the routed forecast judged a usage window insufficient or at risk for this run; no worker has started. Show the evidence in `usageRisk.windows` (each window's `status`, `used` %, `need` in forecast percentage points, `available`, and `resetsAt` in epoch ms shown as local time), then ask `usageRisk.question` with the options continue / stop. On continue, claim the scope (below), then call again with the same args plus `"acceptUsageRisk": true`, and keep it in every later call of this run. Never set it without the user's answer. On stop, go to step 3 with `aborted: "Declined usage-risk forecast"`. Unknown or missing usage data never asks. Continuing overrides only this forecast warning: usageGuard, Claude's usage limit (`USAGE_LIMIT`) and independent verification still apply.
 - If the user declines, go to step 3 with `{ "task": "<task>", "runId": "<runId>", "aborted": "<why>" }`.
 
 Claim the scope before every call that passes `plan`:
@@ -70,8 +98,8 @@ EOF
 ```
 
 - `READY`: make the call with `plan`.
-- `NEEDS_INPUT`: another active run works on overlapping files. Show `message` and ask: wait / stop. On wait, ask again when the user says the other run is done, then rerun the claim. If the user says a listed run is no longer running (its session closed or crashed), rerun the claim with `--clear-stale=<that runId>`. On stop, go to step 3 with `aborted`.
-- `STALE_RUN`: show `message` and ask; on yes rerun the claim with `--clear-stale`, on no go to step 3 with `aborted`.
+- `NEEDS_INPUT`: another active run works on overlapping files. Run `phase.mjs <runId> needs-input`, then show `message` and ask: wait / stop. On wait, ask again when the user says the other run is done, then rerun the claim. If the user says a listed run is no longer running (its session closed or crashed), rerun the claim with `--clear-stale=<that runId>`. On stop, go to step 3 with `aborted`.
+- `STALE_RUN`: run `phase.mjs <runId> needs-input`, then show `message` and ask; on yes rerun the claim with `--clear-stale`, on no go to step 3 with `aborted`.
 - `ERROR`: go to step 3 with `{ "task": "<task>", "runId": "<runId>", "error": "<message>" }`.
 
 If it returns `status: "DIRECT"`, the router judged the task small and this session too large for the ladder to pay off. Go to step 3 with that result; step 3 has you do the task and have it independently verified.
@@ -79,6 +107,8 @@ If it returns `status: "DIRECT"`, the router judged the task small and this sess
 If it returns `status: "USAGE_LIMIT"`, the usage guard stopped the run, or an agent hit Claude's own subscription limit (`final.reason` has the message and reset time). Go to step 3 with that result unchanged; finish writes `HANDOFF.md` and keeps the last attempt's worktree. Never change the user's usage guard setting yourself.
 
 If the Workflow call itself fails, go to step 3 with `{ "task": "<task>", "runId": "<runId>", "error": "<the error>" }`.
+
+If the workflow returns `ERROR` with a journal, record its end boundary, then go to step 3 with `{ "task": "<task>", "runId": "<runId>", "error": "<result.error>" }`.
 
 ## 3. Finish (always, even after an abort or error)
 

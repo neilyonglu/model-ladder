@@ -8,7 +8,7 @@ const nullable = { type: ['string', 'null'] }
 const strings = { type: 'array', items: string }
 const object = (properties) => ({ type: 'object', properties, required: Object.keys(properties), additionalProperties: false })
 export const SCHEMAS = {
-  route: object({ model: string, effort: string, reason: string, goal: string, scope: strings, allowTests: { type: 'boolean' }, readOnly: { type: 'boolean' }, question: nullable, estimatedMinutes: { type: 'integer' }, split: { type: 'array', items: object({ task: string, scope: strings }) } }),
+  route: object({ model: string, effort: string, reason: string, goal: string, scope: strings, allowTests: { type: 'boolean' }, readOnly: { type: 'boolean' }, question: nullable, estimatedMinutes: { type: 'integer' }, optimisticMinutes: { type: 'integer' }, pessimisticMinutes: { type: 'integer' } }),
   worker: object({ status: { enum: ['done', 'blocked'] }, summary: string, blockedReason: nullable }),
   verify: object({ pass: { type: 'boolean' }, reason: string, output: string }),
   diagnose: object({ action: { enum: ['raise_effort', 'raise_model', 'stop_environment', 'stop_unclear'] }, model: nullable, effort: nullable, reason: string, hint: string }),
@@ -89,8 +89,8 @@ export async function codexExec({ phase, cell, cwd, run, prompt, sandbox, timeou
   writeFileSync(schemaPath, JSON.stringify(schema))
   rmSync(outputPath, { force: true })
   const args = [...(executable?.prefixArgs ?? []), 'exec', '-m', cell.model, '-c', `model_reasoning_effort=${JSON.stringify(cell.effort)}`,
-    '-C', cwd, '--json', '--output-schema', schemaPath, '-o', outputPath, '--ephemeral', '--sandbox', sandbox, '-']
-  let result
+    '-C', cwd, '--json', '--output-schema', schemaPath, '-o', outputPath, '--sandbox', sandbox, '-']
+  let result, events = []
   try {
     result = await processRun(executable?.command ?? process.env.CODEX_BINARY ?? 'codex', args, { cwd, input: `This is one internal model-ladder role. Do not invoke model-ladder skills, workflows or runners recursively; perform only the assigned role.\n\n${prompt}`, timeoutMs, signal, env: { MODEL_LADDER_ROLE: phase, MODEL_LADDER_AUTORUN: '0', MODEL_LADDER_BAND: '0' } })
   } catch (error) {
@@ -99,21 +99,21 @@ export async function codexExec({ phase, cell, cwd, run, prompt, sandbox, timeou
     throw error
   } finally {
     if (result) {
+      events = (result.stdout ?? '').split('\n').flatMap((line) => { try { return [JSON.parse(line)] } catch { return [] } })
+      result.usage = events.filter((event) => event.type === 'turn.completed').map((event) => event.usage ?? {})
       const logId = `${phase}-${randomUUID()}`
       writeFileSync(join(run, `${logId}.events.jsonl`), result.stdout ?? '')
       if (result.stderr) writeFileSync(join(run, `${logId}.stderr.txt`), result.stderr)
     }
   }
-  const events = result.stdout.split('\n').flatMap((line) => { try { return [JSON.parse(line)] } catch { return [] } })
   const errors = events.filter((event) => event.type === 'error' || event.type === 'turn.failed').map((event) => JSON.stringify(event)).join('\n')
   const errorText = `${result.stderr}\n${errors}`
   if ((result.code !== 0 || errors) && environmentFailure(errorText)) {
-    throw Object.assign(new EnvironmentError(errorText.slice(-4000)), { ...result, phase, cwd }, usageLimitFailure(errorText) && { code: 'USAGE_LIMIT' })
+    throw Object.assign(new EnvironmentError(errorText.slice(-4000)), { ...result, phase, cwd }, (usageLimitFailure(errors) || usageLimitFailure(errorText)) && { code: 'USAGE_LIMIT' })
   }
-  if (result.code !== 0 || errors) throw new Error(`Codex ${phase} failed (${result.code}): ${errorText.slice(-4000)}`)
+  if (result.code !== 0 || errors) throw Object.assign(new Error(`Codex ${phase} failed (${result.code}): ${errorText.slice(-4000)}`), { usage: result.usage })
   let value
   try { value = validate(JSON.parse(readFileSync(outputPath, 'utf8')), schema) }
-  catch (error) { throw new Error(`Codex ${phase} returned invalid output: ${error.message}`) }
-  const usage = events.filter((event) => event.type === 'turn.completed').map((event) => event.usage ?? {})
-  return { value, usage }
+  catch (error) { throw Object.assign(new Error(`Codex ${phase} returned invalid output: ${error.message}`), { usage: result.usage }) }
+  return { value, usage: result.usage }
 }

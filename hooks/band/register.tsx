@@ -42,6 +42,14 @@ async function editUserConfig($: EngineInterface, edit: (c: Config) => Config) {
 
 // The ladder's prompts carry the user's task on the line after a TASK header.
 const taskOf = (prompt: string, fallback: string) => (prompt.match(/TASK[^\n]*\n\s*([^\n]+)/)?.[1] ?? fallback).trim()
+const projectName = (root: string | undefined, cwd: string) => (root || cwd).replace(/[\\/]+$/, '').split(/[\\/]/).at(-1) || cwd
+const instructionLine = (project: string, line: string) => {
+  const text = line.trim()
+  const compact = text.match(/^([\w.@:-]+)\s+\/\s+(.+)$/)
+  const legacy = text.match(/^use\s+(\S+)\s+when\s+(.+)$/i)
+  return `${project}: ${compact ? `${compact[1]} / ${compact[2]}` : legacy ? `${legacy[1]} / ${legacy[2]}` : line}`
+}
+const formatInstructions = (project: string, text: string) => text.split('\n').map((line) => line.trim() ? instructionLine(project, line) : '').join('\n')
 // claude-haiku-5-5 -> haiku-5.5; an alias such as haiku stays as is.
 const modelName = (id: string) => id.replace(/^claude-/, '').replace(/-\d{8}$/, '').replace(/-(\d+)-(\d+)$/, '-$1.$2')
 // Largest unit only, floored: 42s, 5m, 4h, 3d.
@@ -67,6 +75,10 @@ const remaining = (resetsAt: string | null | undefined, now: number) => {
   return ms > 0 ? roundSpan(ms) : ''
 }
 
+// A Claude Code run's lock (.model-ladder/runs/<runId>.json, scripts/runs.mjs): preflight writes it, finish removes it.
+// expectedMs is the run's forecast total (scripts/forecast.mjs writes it once routing has produced one), else null.
+type Lock = { runId: string; startedAt: number; phase: string; task: string; expectedMs: number | null }
+
 // The skill that has the main session write HANDOFF.md from its conversation (skills/handoff/SKILL.md).
 const HANDOFF_COMMAND = '/model-ladder:handoff'
 
@@ -83,6 +95,46 @@ const handoffText = (running: Row[], now: number, last: any) => {
   }
   out.push('## Resume', `Run \`/model-ladder:run ${last?.task ?? running.at(-1)?.task}\` again.`, '')
   return out.join('\n')
+}
+
+// Repo root per working directory: the nearest folder up holding .git (a directory, or a worktree's file), else
+// the directory itself. .model-ladder lives there, where the scripts write runs/ and history.jsonl.
+const roots = new Map<string, string>()
+async function repoRootOf($: EngineInterface) {
+  const cwd = await $.session.cwd()
+  const known = roots.get(cwd)
+  if (known !== undefined) return known
+  let root = cwd
+  for (let dir = cwd.replace(/[\\/]+$/, ''); ;) {
+    if (await $.fs.exists(`${dir}/.git`).catch(() => false)) { root = dir; break }
+    const cut = Math.max(dir.lastIndexOf('/'), dir.lastIndexOf('\\'))
+    if (cut < 0) break
+    dir = dir.slice(0, cut)
+  }
+  roots.set(cwd, root)
+  return root
+}
+
+// Every Claude Code run lock in this repo, newest first. The newest one is the main session's while no ladder agent runs.
+async function claudeLocks($: EngineInterface): Promise<Lock[]> {
+  const dir = `${await repoRootOf($)}/.model-ladder/runs`
+  const entries = await $.fs.list(dir).catch(() => [])
+  const found: Lock[] = []
+  for (const entry of entries) {
+    if (entry.kind !== 'file' || !entry.name.endsWith('.json')) continue
+    try {
+      const lock = JSON.parse(await $.fs.read(`${dir}/${entry.name}`))
+      if (lock?.runtime !== 'claude') continue
+      found.push({ runId: String(lock.runId ?? entry.name), startedAt: Date.parse(lock.startedAt) || 0, phase: String(lock.phase ?? 'running'), task: String(lock.task ?? ''), expectedMs: Number.isFinite(lock.expectedMs) && lock.expectedMs > 0 ? lock.expectedMs : null })
+    } catch { /* half-written or gone: skip it */ }
+  }
+  return found.sort((a, b) => b.startedAt - a.startedAt)
+}
+
+// The ladder run a workflow run belongs to: the one lock whose task is that run's TASK line. None or several: unknown.
+const ladderLock = (locks: Lock[], task: string | undefined) => {
+  const own = task ? locks.filter((l) => l.task.trim().split('\n')[0].trim() === task) : []
+  return own.length === 1 ? own[0] : null
 }
 
 export const register: Register = (on, options) => {
@@ -102,6 +154,8 @@ export const register: Register = (on, options) => {
   const verified = new Set<string>()
   // Last context size written to .model-ladder/context.json, so it is rewritten only when it changes.
   let lastContext = ''
+  // Redraws once a second while the main-session row shows, so its elapsed time moves.
+  let mainTick: Timer | null = null
 
   // Records the subscription usage where preflight and the verifier read it, so the usage guard needs no statusline.
   // It runs with the band hidden too: the guard depends on it, not on the drawing.
@@ -118,7 +172,7 @@ export const register: Register = (on, options) => {
       if (key !== lastContext) {
         lastContext = key
         const context = { tokens, window: e.context?.window ?? null, updatedAt: Math.floor((await $.clock.now()) / 1000) }
-        await $.fs.write(`${await $.session.cwd()}/.model-ladder/context.json`, JSON.stringify(context)).catch(() => { lastContext = '' })
+        await $.fs.write(`${await repoRootOf($)}/.model-ladder/context.json`, JSON.stringify(context)).catch(() => { lastContext = '' })
       }
     }
     const window = (kind: string) => {
@@ -127,7 +181,7 @@ export const register: Register = (on, options) => {
     }
     if (e.rateLimits.length) {
       const usage = { five_hour: window('five_hour'), seven_day: window('seven_day'), updatedAt: Math.floor((await $.clock.now()) / 1000) }
-      await $.fs.write(`${await $.session.cwd()}/.model-ladder/usage.json`, JSON.stringify(usage)).catch(() => undefined)
+      await $.fs.write(`${await repoRootOf($)}/.model-ladder/usage.json`, JSON.stringify(usage)).catch(() => undefined)
     }
     return next(e)
   })
@@ -149,6 +203,8 @@ export const register: Register = (on, options) => {
     const what = e.description.replace(/\s*\S+\/\S+$/, '')
     const effort = e.description.match(/\S+\/(\S+)/)?.[1]
     const role = e.subagentType.slice('model-ladder:'.length) as Row['role']
+    // The run's forecast total, only from its own lock; unknown (no lock, no forecast yet, ambiguous) shows elapsed time alone.
+    const expectedMs = ladderLock(await claudeLocks($).catch(() => []), tasks.get(e.workflow.runId))?.expectedMs ?? null
     // shortcut: the turn.complete event type is not available here, so FAIL is inferred from "a worker spawns after a verifier in the same run"; this assumes the ladder only redispatches a worker after a FAIL, upgrade to the verifier's actual result once turn.complete exposes its output.
     const redo = isRedo(verified, e.workflow.runId, isWorker)
     if (role === 'verifier') verified.add(e.workflow.runId)
@@ -162,6 +218,7 @@ export const register: Register = (on, options) => {
       status: 'running',
       startedAt: await $.clock.now(),
       ms: null,
+      expectedMs,
     }
     await update($, rows, (list) => addRow(list, row))
     tick ??= $.clock.every(1000, () => {
@@ -197,7 +254,9 @@ export const register: Register = (on, options) => {
     const els = $.ui.resolve(e)
     const { Box, Button, Text } = els
     const now = await $.clock.now()
-    const elapsed = (r: Row) => `${r.status === 'done' ? '✓ ' : ''}${span(r.ms ?? now - r.startedAt)}`
+    // Elapsed, then "/" and the run's expected total when known; a finished row keeps both as they were.
+    const total = (ms: number | null | undefined) => (ms ? `/${span(ms)}` : '')
+    const elapsed = (r: Row) => `${r.status === 'done' ? '✓ ' : ''}${span(r.ms ?? now - r.startedAt)}${total(r.expectedMs)}`
     const usage = (await $.session.usage()).rateLimits
       .filter((w) => WINDOW[w.kind])
       .map((w) => {
@@ -213,6 +272,13 @@ export const register: Register = (on, options) => {
     // With 2+ runs each row says which run it belongs to, by that run's task.
     const tag = (r: Row) => (runs > 1 ? `${fit(tasks.get(r.run) ?? '', 20).trim()} ` : '')
     const dot = last && <Text>{' ' + (last.role === 'verifier' ? '🔵' : last.redo ? '🔴' : '🟢')}</Text>
+    // Between ladder agents a run is still going while its lock exists: the main session holds it.
+    const main = running.length ? null : ((await claudeLocks($))[0] ?? null)
+    if (main) mainTick ??= $.clock.every(1000, () => $.ui.invalidate('ui.render'))
+    else { mainTick?.cancel(); mainTick = null }
+    const mainElapsed = (m: Lock) => `${span(now - m.startedAt)}${total(m.expectedMs)}`
+    const mainTask = main ? `${main.phase}: ${main.task}` : ''
+    const idle = running.length || main ? '' : ' · idle'
 
     if (folded) {
       return (
@@ -223,22 +289,25 @@ export const register: Register = (on, options) => {
           <Text dimColor>── {usageLine || 'usage unknown'}{last ? ' · ' : ''}</Text>
           {last && runs > 1 && <Text dimColor>{runs} runs · </Text>}
           {last && <Text>{last.cell} · {elapsed(last)} · {fit(last.task, 30).trim()}</Text>}
+          {main && <Text> · no model · {mainElapsed(main)} · {fit(mainTask, 30).trim()}</Text>}
         </Box>
       )
     }
 
     const project = await readJson($, await projectPath($))
+    const repoRoot = (await $.session.repo())?.root
     const config = projectSkills(
       mergeConfig(BAND_DEFAULTS, { ...(await readJson($, await userPath($))), ...pluginLayer(options) }, project),
-      (await $.session.repo())?.root,
+      repoRoot,
     )
-    // Show the instructions in effect here (project key, else plugin option), not a claim that every mentioned skill was invoked.
-    const skill = (role: string, value: unknown) => typeof value === 'string' && value.trim() ? `${role} ${value}` : null
-    const withs = [skill('worker', config.worker_skills), skill('verifier', config.verifier_skills)].filter(Boolean)
+    // Show configured instructions in effect here; this does not claim that any skill has run.
+    const projectNameForDisplay = projectName(repoRoot, await $.session.cwd())
+    const skill = (value: unknown) => typeof value === 'string' && value.trim() ? formatInstructions(projectNameForDisplay, value) : null
+    const withs = [skill(config.worker_skills), skill(config.verifier_skills)].filter(Boolean)
     const skillText = withs.join(' · ')
     const skillsFolded = await read($, areSkillsFolded)
     const handoff = async () => {
-      const dir = `${await $.session.cwd()}/.model-ladder`
+      const dir = `${await repoRootOf($)}/.model-ladder`
       let last = null
       try { last = JSON.parse((await $.fs.read(`${dir}/history.jsonl`)).trim().split('\n').at(-1) ?? '') } catch { /* no history yet */ }
       const live = (await read($, rows)).filter((r) => r.status === 'running')
@@ -280,11 +349,12 @@ export const register: Register = (on, options) => {
     }
     // Fixed-width columns line up in any font, unlike padding with spaces.
     // Terminal cuts the task itself; elsewhere the full task goes to the row and truncate-end adds the ellipsis at the band's edge.
-    const taskCols = Math.max(10, (e.props.bodyColumns ?? 60) - 29 - 2)
+    const timeCols = Math.max(12, ...shown.map((r) => elapsed(r).length + 1), main ? mainElapsed(main).length + 1 : 0)
+    const taskCols = Math.max(10, (e.props.bodyColumns ?? 60) - 20 - timeCols - 2)
     const row = (key: string, model: string, time: string, task: string, dim = false) => (
       <Box key={key} flexWrap="nowrap">
         <Box width={20} flexShrink={0}><Text dimColor={dim} wrap="truncate-end">{model}</Text></Box>
-        <Box width={9} flexShrink={0}><Text dimColor={dim}>{time}</Text></Box>
+        <Box width={timeCols} flexShrink={0}><Text dimColor={dim}>{time}</Text></Box>
         <Box flexGrow={1} flexShrink={1} minWidth={0}><Text dimColor={dim} wrap="truncate-end">{task}</Text></Box>
       </Box>
     )
@@ -294,7 +364,7 @@ export const register: Register = (on, options) => {
           {fold}
           {dot}
           <Text bold> model-ladder </Text>
-          <Text dimColor>── {usageLine || 'usage unknown'}{running.length ? '' : ' · idle'}</Text>
+          <Text dimColor>── {usageLine || 'usage unknown'}{idle}</Text>
         </Box>
         {withs.length > 0 && (
           <Box flexWrap="nowrap">
@@ -305,7 +375,8 @@ export const register: Register = (on, options) => {
             </Box>
           </Box>
         )}
-        {shown.length > 0 && row('head', 'model/effort', 'time', 'task', true)}
+        {(shown.length > 0 || main) && row('head', 'model/effort', 'time', 'task', true)}
+        {main && row('main-session', 'no model', mainElapsed(main), e.surface === 'terminal' ? clip(mainTask, taskCols) : mainTask)}
         {shown.map((r) => row(r.id, r.cell, elapsed(r), e.surface === 'terminal' ? clip(tag(r) + r.task, taskCols) : tag(r) + r.task))}
         <Box>
           <Button key="guard" plain label={`usage guard: ${enabled ? 'on' : 'off'}`}

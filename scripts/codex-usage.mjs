@@ -18,17 +18,19 @@ const newest = (dir) => {
 }
 // Highest used_percent among unexpired windows of the latest Codex session; null = unknown (never blocks).
 // details: true returns labelled 5h/7d windows instead, with null for unknown/expired windows.
-export function readCodexUsage(home = process.env.CODEX_HOME ?? join(homedir(), '.codex'), now = Date.now() / 1000, { details = false, resets = false } = {}) {
-  const unknown = details ? { fiveHour: null, sevenDay: null } : null
+export function readCodexUsage(home = process.env.CODEX_HOME ?? join(homedir(), '.codex'), now = Date.now() / 1000, { details = false, resets = false, evidence = false } = {}) {
+  const unknown = evidence ? { sampledAt: null, windows: {}, reason: 'No timestamped subscription sample' } : details ? { fiveHour: null, sevenDay: null } : null
   try {
     const file = newest(join(home, 'sessions'))
     if (!file) return unknown
     const lines = readFileSync(file.path, 'utf8').split('\n')
     for (let i = lines.length - 1; i >= 0; i--) {
       if (!lines[i].includes('rate_limits')) continue
-      let limits
-      try { limits = find(JSON.parse(lines[i]), 'rate_limits') } catch { continue }
+      let limits, event
+      try { event = JSON.parse(lines[i]); limits = find(event, 'rate_limits') } catch { continue }
       if (!limits) continue
+      if (evidence) return { sampledAt: Date.parse(event.timestamp) || null, source: file.path,
+        windows: Object.fromEntries([limits.primary, limits.secondary].filter((w) => w && Number.isFinite(w.window_minutes)).map((w) => [w.window_minutes === 300 ? 'five_hour' : w.window_minutes === 10080 ? 'seven_day' : `${w.window_minutes}_minutes`, { used: w.used_percent, resetsAt: w.resets_at * 1000 }])) }
       const live = [limits.primary, limits.secondary].filter((w) => Number.isFinite(w?.used_percent) && w.resets_at > now)
       if (details) {
         // Only label known window durations; primary/secondary are not guaranteed to be 5h/7d.

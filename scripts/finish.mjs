@@ -10,10 +10,11 @@ import { appendFileSync, existsSync, readFileSync, rmSync, writeFileSync } from 
 import { join, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { canonical } from '../hooks/guard.mjs'
-import { git, print, repoRoot, runDir, samePath, tryGit, worktrees } from './common.mjs'
-import { readLocks, releaseLock, runFiles, withMutex } from './runs.mjs'
+import { artifactDir, git, print, repoRoot, runDir, samePath, tryGit, worktrees } from './common.mjs'
+import { readLocks, releaseLock, withMutex } from './runs.mjs'
 import { updateNote } from './update-check.mjs'
-import { forceStopRuns } from './usage-guard.mjs'
+import { claudeGuard, forceStopRuns } from './usage-guard.mjs'
+import { finishForecast, history } from './forecast.mjs'
 
 function apply(root, run, state, winner) {
   const wt = winner.worktreePath
@@ -174,9 +175,12 @@ function main(input) {
   const run = runDir(root)
   const { task, result, error, aborted, runId } = input
   // Without a runId: a run an older preflight started, with its files and run.json in .model-ladder/.
-  const files = runId ? runFiles(root, runId) : run
+  const currentFiles = runId ? join(artifactDir(root), runId) : run
+  const legacyFiles = runId ? join(run, 'runs', runId) : run
+  const files = existsSync(join(currentFiles, 'state.json')) ? currentFiles : existsSync(join(legacyFiles, 'state.json')) ? legacyFiles : currentFiles
   const statePath = join(files, 'state.json')
   const state = existsSync(statePath) ? JSON.parse(readFileSync(statePath, 'utf8')) : { before: [], config: {} }
+  if (state.forecast && Number.isFinite(state.pendingBoundary)) state.forecast.openBoundary = { startedAt: state.pendingBoundary, censored: true, reason: 'Workflow call did not return a recorded boundary' }
   const notes = []
   let outcome = { applied: false, files: [] }
   let keep = []
@@ -210,13 +214,14 @@ function main(input) {
     for (const f of ['run.json', 'setup.patch', 'state.json', 'index']) rmSync(join(run, f), { force: true })
   }
 
-  if (aborted) return `model-ladder stopped before running: ${aborted}`
-
+  const forecast = state.forecast ? finishForecast(root, state.forecast, history(root), claudeGuard(root), aborted ? 'ABORTED' : outcome.keep ? 'CONFLICT' : result?.status ?? 'ERROR') : null
   appendFileSync(join(run, 'history.jsonl'), `${JSON.stringify({
     date: new Date().toISOString(),
     runId: runId ?? null,
     task,
-    status: result?.status ?? 'ERROR',
+    runtime: 'claude',
+    status: aborted ? 'ABORTED' : result?.status ?? 'ERROR',
+    forecast,
     start: result?.plan?.start ?? null,
     attempts: (result?.attempts ?? []).map((a) => ({ cell: a.cell, pass: a.pass, reason: a.reason, action: a.action, tokens: a.tokens, modelContext: a.modelContext, diagnosisContext: a.diagnosisContext })),
     winner: result?.winner ? { summary: result.winner.summary } : null,
@@ -226,6 +231,8 @@ function main(input) {
     kept: keep,
     error: error ?? null,
   })}\n`)
+
+  if (aborted) return `model-ladder stopped before running: ${aborted}`
 
   if (result?.status === 'USAGE_LIMIT') {
     outcome.handoff = join(run, 'HANDOFF.md')

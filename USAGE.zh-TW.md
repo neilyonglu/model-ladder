@@ -2,6 +2,29 @@
 
 [README](README.zh-TW.md#使用方式) · [English](USAGE.md) · [設計](DESIGN.zh-TW.md)
 
+## 後端預估與校準
+
+耗時範圍以結構化資料存於 live/result/history JSON，面板時間欄顯示「經過/預估總時長」。範圍包含路由、
+實作、自我檢查、測試、獨立驗證與重試風險。無可比較成功歷史時，範圍僅為
+路由模型判斷；有資料後使用實際誤差比例的最小值、中位數與最大值，不宣稱
+信賴區間或準確率。歷史保留原始預估、階段更新、模型、effort、token、實際計時
+與誤差。中斷、DIRECT、錯誤與取消屬於截尾紀錄；失敗紀錄也不作為成功校準證據。
+僅使用最近 90 天、相同執行環境、起始模型與 effort、路由器、驗證器、驗證命令、
+重試上限、路由預估分鐘數與任務模式的紀錄。續跑使用獨立的比較紀錄並保留前一次
+原始預估；缺少可比較的續跑資料時，範圍保持未知。
+
+每個可用訂閱時間窗分別比較預估消耗、剩餘額度與啟用中的 usageGuard 門檻。
+分鐘或 token 不換算成訂閱百分比。證據必須是新鮮的前後觀測、相同來源、帳號識別與重置時間、
+未下降的百分比，並且可歸因、排除帳號同時活動。目前來源無法證明沒有其他帳號活動，
+因此一般回傳 unknown 與原因。過期、缺少時間戳、跨重置、失敗或未完成的資料不作為
+可靠證據；既有 guard 保持有效。階段邊界以整個 run 的消耗範圍保守比較目前餘額，
+不假設線性消耗速率。
+
+Claude 由主控端在每次 Workflow 呼叫前後執行 Node 記錄命令。Workflow 不讀時鐘、
+不匯入模組；結構化 journal 每次接續一個代理，重播先前結果不再呼叫模型。
+階段計時包含該次呼叫內的主控端成本；preflight 到 finish 的總時間包含等待。
+錯誤時未結束的邊界保留為截尾觀測。
+
 ## 執行報告
 
 報告會用 session 的語言整理任務、嘗試、修改檔案、驗證與剩餘限制。
@@ -74,7 +97,7 @@ Windows 需使用 PATH 或 `CODEX_BINARY` 指定的原生 `codex.exe`，不接�
 | DIRECT | 提供實際 `contextTokens`、`contextWindow`，且 router 須判定為小任務。 |
 | 完成 DIRECT | 只修改回傳的 `worktreePath`，再以原始輸入加 `directRun`、`directSummary` 交回。 |
 | 強制一般 ladder | 使用 `forceLadder: true`，同時停用拆分建議。 |
-| 整體執行大型任務 | 選擇整體執行後，使用 `acceptSplit: false`。 |
+| 執行大型任務 | 不再要求拆分確認；若預估用量可能不足，回答用量風險詢問（`acceptUsageRisk: true` 為繼續）。 |
 | Commit | 明確開啟 `commit: true`，只提交已驗證且不含無關 staged 變更的檔案。 |
 | 逾時續跑 | 以原始輸入加回傳的 `resumeRun` 重試，skill 最多自動續跑兩次。 |
 
@@ -104,7 +127,6 @@ DIRECT 不代表完成，必須遵守回傳的保護規則，獨立驗證後才�
 | `usageGuard` | 開啟、`90%` | 使用量保護，建議存於個人檔。 |
 | `worker_skills` / `verifier_skills` | 空白 | 自然語言角色指示。 |
 | `direct_threshold` | `30` | 小任務 DIRECT 的 context 百分比，或 `"off"`。 |
-| `split_minutes` | `20` | 建議拆分的分鐘門檻，或 `"off"`。 |
 | `autoRun` / `band` | `true` | 預設路由與顯示開關。 |
 
 Claude 模型別名會使用可用版本，Codex 的模型 ID 與 effort 請依帳戶調整。
@@ -121,7 +143,7 @@ Claude 外掛選單提供 DIRECT 門檻 20–80，以及拆分門檻 10、20、3
 | `MODEL_LADDER_NO_UPDATE_CHECK=1` | 停用版本檢查。 |
 
 Claude 外掛角色指示作為預設，專案同名鍵可覆蓋，空字串也算覆蓋。
-每行一條規則，`model-ladder: use plugin:skill` 只在主 repo 資料夾名稱完全等於 `model-ladder` 時生效，無冒號的行全域適用。
+每行一條規則，`model-ladder: use plugin:skill` 只在主 repo 資料夾名稱完全等於 `model-ladder` 時生效，沒有 `專案名稱: ` 前綴的行（包括內文含冒號的行，例如 `use ponytail:ponytail`）全域適用。
 第一個冒號分隔專案名稱，符合的內容保留後續冒號，空值與未解析的 `${...}` 不加入說明。
 缺少能力時會在執行前及最終報告提醒，例如：`ponytail` 在這個專案無法使用。
 角色指示可指定 skills、plugins、slash commands 或 MCP server，但不能擴大權限、允許 verifier 修改或遞迴呼叫 ladder。

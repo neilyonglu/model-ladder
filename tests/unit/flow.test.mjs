@@ -2,6 +2,7 @@ import '../helpers/isolate-home.mjs'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
+import { assessUsage } from '../../scripts/ladder-rules.mjs'
 
 const src = readFileSync(new URL('../../workflows/ladder.js', import.meta.url), 'utf8').replace(/^export /m, '')
 const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor
@@ -296,55 +297,55 @@ const long = { ...routed, estimatedMinutes: 35, split: parts }
 // The workflow's first-call result; a run that went on to a worker would fail on the unscripted agent call.
 const splitStatus = async (r, extra) => (await routeOnly(r, extra)).out
 
-test('the router prompt and schema ask for estimatedMinutes and split', async () => {
-  const { calls } = await routeOnly(long, { splitMinutes: 30 })
-  assert.equal(calls[0].schema.properties.estimatedMinutes.type, 'integer')
-  assert.equal(calls[0].schema.properties.split.type, 'array')
-  assert.deepEqual(calls[0].schema.properties.split.items.required, ['task', 'scope'])
-  assert.ok(calls[0].schema.required.includes('estimatedMinutes') && calls[0].schema.required.includes('split'))
-  assert.match(calls[0].prompt, /estimatedMinutes: integer.*including the time the tests take/)
-  assert.match(calls[0].prompt, /more than 30, the task cut into subtasks/)
-  assert.match((await routeOnly(long, { splitMinutes: 'off' })).calls[0].prompt, /split: always an empty array/)
-  assert.match((await routeOnly(long)).calls[0].prompt, /more than 20, the task cut into subtasks/)
+test('router estimates all phases and an honest range without a split schema or prompt', async () => {
+  const { calls } = await routeOnly(long)
+  for (const key of ['estimatedMinutes', 'optimisticMinutes', 'pessimisticMinutes']) {
+    assert.equal(calls[0].schema.properties[key].type, 'integer')
+    assert.ok(calls[0].schema.required.includes(key))
+  }
+  assert.equal(calls[0].schema.properties.split, undefined)
+  assert.match(calls[0].prompt, /FULL run.*routing.*self-checks.*independent verification.*retry risk/)
 })
 
-test('an estimate over the limit with a split comes back NEEDS_INPUT with the suggestion', async () => {
-  const out = await splitStatus(long, { splitMinutes: 30 })
-  assert.equal(out.status, 'NEEDS_INPUT')
-  assert.deepEqual(out.plan.splitSuggestion, { estimatedMinutes: 35, limit: 30, parts })
-  assert.equal((await splitStatus(long)).plan.splitSuggestion.limit, 20)
-})
-
-test('an estimate equal to the limit, or under it, does not split', async () => {
-  assert.equal((await routeThenPass({ ...long, estimatedMinutes: 30 }, { splitMinutes: 30 })).out.status, 'VERIFIED')
-  assert.equal((await routeThenPass({ ...long, estimatedMinutes: 20 })).out.status, 'VERIFIED')
-  assert.equal((await splitStatus({ ...long, estimatedMinutes: 31 }, { splitMinutes: 30 })).status, 'NEEDS_INPUT')
-})
-
-test('off, an empty split, forceLadder and acceptSplit:false skip the split suggestion', async () => {
-  assert.equal((await routeThenPass(long, { splitMinutes: 'off' })).out.status, 'VERIFIED')
-  assert.equal((await routeThenPass({ ...long, split: [] })).out.status, 'VERIFIED')
-  assert.equal((await routeThenPass({ ...long, split: undefined })).out.status, 'VERIFIED')
-  assert.equal((await routeThenPass(long, { forceLadder: true })).out.status, 'VERIFIED')
-  assert.equal((await routeThenPass(long, { acceptSplit: false })).out.status, 'VERIFIED')
-  assert.equal((await routeThenPass({ ...routed, split: parts })).out.status, 'VERIFIED')
-})
-
-test('a DIRECT task is never offered a split', async () => {
-  const { out } = await routeOnly({ ...long, small: true, smallReason: 'one function' }, { contextTokens: 400000 })
-  assert.equal(out.status, 'DIRECT')
-})
-
-test('a question is asked before the split; the split before acceptance criteria', async () => {
+test('long tasks proceed and still require clarification or acceptance when needed', async () => {
+  assert.equal((await routeThenPass(long)).out.status, 'VERIFIED')
   const asked = await splitStatus({ ...long, question: 'Better how?' })
+  assert.equal(asked.status, 'NEEDS_INPUT')
   assert.equal(asked.plan.question, 'Better how?')
-  assert.equal(asked.plan.splitSuggestion.limit, 20)
+  assert.equal(asked.plan.splitSuggestion, undefined)
   const noVerify = await splitStatus({ ...long, verify: null })
+  assert.equal(noVerify.status, 'NEEDS_INPUT')
   assert.equal(noVerify.plan.needsAcceptance, true)
-  assert.ok(noVerify.plan.splitSuggestion)
-  const whole = await splitStatus({ ...long, verify: null }, { acceptSplit: false })
-  assert.equal(whole.plan.needsAcceptance, true)
-  assert.equal(whole.plan.splitSuggestion, null)
+})
+
+test('telemetry executes one agent per host boundary and replays without respending tokens', async () => {
+  const r = await routeOnly({ ...long, optimisticMinutes: 20, pessimisticMinutes: 60 }, { telemetry: true, runId: 'claude-test' })
+  assert.equal(r.out.status, 'ROUTED')
+  assert.equal(r.out.journal.length, 1)
+  const first = await call([{ label: 'worker', result: done }], { telemetry: true, runId: 'claude-test', plan: r.out.plan, journal: r.out.journal })
+  assert.equal(first.out.status, 'BOUNDARY')
+  assert.equal(first.out.journal.length, 2)
+  const second = await call([{ label: 'verify', result: pass }], { telemetry: true, runId: 'claude-test', plan: r.out.plan, journal: first.out.journal })
+  assert.equal(second.out.status, 'VERIFIED')
+  assert.equal(second.out.tokens, 30)
+  assert.deepEqual(second.out.journal.map((e) => e.phase), ['route', 'worker', 'verify'])
+  assert.deepEqual(second.out.journal.map((e) => e.measurement.tokens), [10, 10, 10])
+})
+
+test('telemetry replay covers failed verification, diagnosis and an escalated worker', async () => {
+  const steps = [ { label: 'worker', result: done }, { label: 'verify', result: fail },
+    { label: 'diagnose', result: diag('raise_effort', 'haiku', 'medium') },
+    { label: 'worker', result: done }, { label: 'verify', result: pass } ]
+  let journal = [], out
+  for (const step of steps) {
+    const r = await runWith([step], { telemetry: true, journal })
+    out = r.out; journal = out.journal
+    assert.equal(r.calls.length, 1)
+  }
+  assert.equal(out.status, 'VERIFIED')
+  assert.equal(out.tokens, 50)
+  assert.equal(out.attempts.length, 2)
+  assert.equal(journal[3].effort, 'medium')
 })
 
 test('a router that fails to report stops the run', async () => {
@@ -573,4 +574,85 @@ test('router prompt asks for targeted tests and judges only from the task and re
   assert.match(prompt, /Judge only from the TASK text and the repo contents/)
   assert.match(prompt, /Do not read session transcripts or any file outside the repo/)
   assert.match(prompt, /Numbers in the TASK \(1, 2, 3\.\.\.\) refer only to items within that task/)
+})
+
+// The forecast the boundary recorder hands back after routing: assessUsage over comparable completed runs, each
+// observed to consume `points` percentage points of the five-hour window, against a sample `used` % now.
+const NOW = 1800000000000
+const HOUR = 3600000
+const window = (sampledAt, used) => ({ accountId: 'acct', sampledAt, source: 'acct', windows: { five_hour: { used, resetsAt: NOW + 3 * HOUR } } })
+const consumed = (points) => ({ forecast: {
+  version: 1, key: 'k', startedAt: NOW - 120000, phases: [],
+  actual: { status: 'VERIFIED', completed: true, censored: false, durationMs: 60000, endedAt: NOW - 60000 },
+  attribution: { exclusive: true, source: 'test', accountId: 'acct' }, usageStart: window(NOW - 120000, 20), usageEnd: window(NOW - 60000, 20 + points),
+} })
+const routedForecast = (used, points) => {
+  const observation = window(NOW, used)
+  return { current: { boundary: 'route', usage: assessUsage('k', points.map(consumed), observation, { enabled: true, threshold: 90 }, NOW), observation } }
+}
+
+test('a forecast short on usage asks before any worker, with window, used %, need and reset evidence', async () => {
+  for (const [points, status] of [[[10], 'insufficient'], [[4, 10], 'at-risk']]) {
+    const forecast = routedForecast(85, points)
+    assert.equal(forecast.current.usage.five_hour.status, status)
+    for (const extra of [{}, { acceptUsageRisk: 'true' }, { acceptUsageRisk: false }, { telemetry: true, journal: [] }]) {
+      const { out, calls } = await runWith([], { runId: 'claude-1', forecast, ...extra })
+      assert.equal(out.status, 'NEEDS_INPUT')
+      assert.equal(out.reason, 'USAGE_RISK')
+      assert.equal(calls.length, 0)
+      assert.deepEqual(out.plan, plan)
+      assert.deepEqual(out.usageRisk.windows, [{
+        window: 'five_hour', status, used: 85, resetsAt: NOW + 3 * HOUR,
+        need: { optimistic: points[0], mostLikely: 10, pessimistic: 10, unit: 'percentage-points' },
+        available: 5, headroom: 15, guardHeadroom: 5,
+      }])
+      assert.match(out.usageRisk.question, /five_hour .*85% used, forecast needs .*10 points, 5 available.*Continue anyway\?/)
+    }
+  }
+})
+
+test('acceptUsageRisk true runs the ladder; later continuations of the run never ask again', async () => {
+  const forecast = routedForecast(85, [10])
+  const { out, calls } = await runWith([{ label: 'worker', result: done }, { label: 'verify', result: pass }], { runId: 'claude-1', forecast, acceptUsageRisk: true })
+  assert.equal(out.status, 'VERIFIED')
+  assert.deepEqual(calls.map((c) => c.label.split(' ')[0]), ['worker', 'verify'])
+  const first = await runWith([{ label: 'worker', result: done }], { runId: 'claude-1', forecast, acceptUsageRisk: true, telemetry: true, journal: [] })
+  assert.equal(first.out.status, 'BOUNDARY')
+  const second = await runWith([{ label: 'verify', result: pass }], { runId: 'claude-1', forecast, telemetry: true, journal: first.out.journal })
+  assert.equal(second.out.status, 'VERIFIED')
+})
+
+test('sufficient, unknown or missing usage data never asks', async () => {
+  const unattributed = routedForecast(85, [10])
+  unattributed.current.usage = assessUsage('k', [consumed(10)], { ...unattributed.current.observation, accountId: undefined }, { enabled: true, threshold: 90 }, NOW)
+  const forecasts = [routedForecast(50, [10]), routedForecast(85, []), unattributed, { current: null }, undefined]
+  assert.deepEqual(forecasts.slice(0, 3).map((f) => f.current.usage.five_hour.status), ['sufficient', 'unknown', 'unknown'])
+  for (const forecast of forecasts) {
+    const { out } = await runWith([{ label: 'worker', result: done }, { label: 'verify', result: pass }], { runId: 'claude-1', forecast })
+    assert.equal(out.status, 'VERIFIED')
+  }
+})
+
+test('accepting the forecast keeps usageGuard, Claude\'s limit and independent verification', async () => {
+  const forecast = routedForecast(85, [10])
+  const accepted = { runId: 'claude-1', forecast, acceptUsageRisk: true, usageGuard }
+  const guarded = await runWith([{ label: 'worker', result: done }, { label: 'verify', result: { ...fail, usage: live(true, 95) } }], accepted)
+  assert.equal(guarded.out.status, 'USAGE_LIMIT')
+  assert.match(guarded.out.final.reason, /usageGuard threshold of 90%/)
+  const limited = await runWith([{ label: 'worker', throws: "You've hit your 5-hour limit · resets 5pm" }], accepted)
+  assert.equal(limited.out.status, 'USAGE_LIMIT')
+  const rejected = await runWith([{ label: 'worker', result: done }, { label: 'verify', result: { ...fail, usage: live(true, 10) } }, { label: 'final diagnosis', result: { reason: 'r', suggestion: 's' } }],
+    { ...accepted, config: { ...config, maxAttempts: 1 } })
+  assert.equal(rejected.out.status, 'FAILED')
+})
+
+test('both skills ask about usage risk first and rerun only on an explicit yes, or stop cleanly', () => {
+  const claude = readFileSync(new URL('../../skills/run/SKILL.md', import.meta.url), 'utf8')
+  const usageRisk = claude.slice(claude.indexOf('If it returns `status: "NEEDS_INPUT"`'), claude.indexOf('Claim the scope before every call'))
+  assert.match(usageRisk, /run `phase\.mjs <runId> needs-input` before you ask/)
+  assert.match(usageRisk, /`USAGE_RISK`.*`"acceptUsageRisk": true`.*On stop, go to step 3 with `aborted/)
+  assert.match(claude, /pass it unchanged as `args\.forecast`/)
+  const codex = readFileSync(new URL('../../codex-skills/model-ladder/SKILL.md', import.meta.url), 'utf8')
+  assert.match(codex, /USAGE_RISK.*ask continue \/ stop.*acceptUsageRisk true.*On stop, end and report/)
+  for (const text of [claude, codex]) assert.match(text, /usageGuard, (Claude's usage limit \(`USAGE_LIMIT`\)|USAGE_LIMIT stops) and independent verification still apply/)
 })

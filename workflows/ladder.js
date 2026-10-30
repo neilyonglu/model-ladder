@@ -61,14 +61,109 @@ function isDirect(small, contextTokens, forceLadder, contextWindow, directThresh
   return contextPercent(contextTokens, contextWindow) >= directThreshold
 }
 
-// The router's wall-clock estimate (start to verified, test runs included) against the person's limit in minutes
-// (split_minutes, or "off"). Equal to the limit is fine. The caller skips this for forceLadder, DIRECT and acceptSplit:false.
-const DEFAULT_SPLIT_MINUTES = 20
+const FORECAST_MAX_AGE = 90 * 86400000
+const range = (values, provenance) => {
+  const sorted = values.filter((n) => Number.isFinite(n) && n >= 0).sort((a, b) => a - b)
+  return { optimistic: sorted[0] ?? null, mostLikely: sorted.length ? sorted[Math.floor(sorted.length / 2)] : null,
+    pessimistic: sorted.at(-1) ?? null, provenance, sampleCount: sorted.length }
+}
 
-function splitSuggestion(estimatedMinutes, split, limit = DEFAULT_SPLIT_MINUTES) {
-  if (!(typeof limit === 'number' && limit > 0)) return null
-  if (!(typeof estimatedMinutes === 'number' && estimatedMinutes > limit) || !Array.isArray(split) || !split.length) return null
-  return { estimatedMinutes, limit, parts: split }
+function comparableForecasts(key, rows, now) {
+  return rows.map((r) => r?.forecast).filter((f) => f?.version === 1 && f.key === key &&
+    f.actual?.status === 'VERIFIED' && f.actual.completed === true && f.actual.censored === false &&
+    Number.isFinite(f.actual.durationMs) && f.actual.durationMs >= 0 && Number.isFinite(f.startedAt) && f.actual.endedAt >= f.startedAt &&
+    Number.isFinite(f.actual.endedAt) && f.actual.endedAt <= now && now - f.actual.endedAt <= FORECAST_MAX_AGE)
+}
+
+function durationForecast(key, route, rows, now) {
+  const samples = comparableForecasts(key, rows, now).filter((f) => f.routerMinutes > 0)
+  const point = route.estimatedMinutes > 0 ? route.estimatedMinutes * 60000 : null
+  if (samples.length && point !== null) {
+    return { ...range(samples.map((f) => point * f.actual.durationMs / (f.routerMinutes * 60000)), 'observed-router-error-ratios'),
+      unit: 'ms', retryEvidence: { sampleCount: samples.length, retriedRuns: samples.filter((f) => f.phases?.filter((p) => p.phase === 'worker').length > 1).length },
+      reason: 'Empirical min/median/max of comparable completed runs; not a confidence interval. Includes routing, work, tests, verification and observed retries.' }
+  }
+  const lo = route.optimisticMinutes * 60000, hi = route.pessimisticMinutes * 60000
+  const valid = point !== null && Number.isFinite(lo) && lo > 0 && lo <= point && Number.isFinite(hi) && hi >= point
+  return { optimistic: valid ? lo : null, mostLikely: point, pessimistic: valid ? hi : null, unit: 'ms',
+    provenance: 'router-judgment', sampleCount: 0,
+    reason: valid ? 'Uncalibrated router judgment, including all phases and retry risk.' : 'Insufficient history and no valid router range; bounds unknown.' }
+}
+
+function remainingForecast(state, rows, now) {
+  const observed = state.phases
+  const prefix = observed.map((p) => `${p.phase}/${p.model}/${p.effort}/${p.complete}/${p.pass}`)
+  const samples = comparableForecasts(state.key, rows, now).filter((f) => prefix.every((p, i) => {
+    const phase = f.phases?.[i]
+    return phase && `${phase.phase}/${phase.model}/${phase.effort}/${phase.complete}/${phase.pass}` === p
+  }))
+  if (prefix.length && samples.length) {
+    const observed = samples.map((f) => f.actual.durationMs - f.phases[prefix.length - 1].elapsedMs)
+    return { ...range(observed, 'observed-phase-remainder'), unit: 'ms' }
+  }
+  const elapsed = Math.max(0, now - state.startedAt)
+  const original = state.original
+  const retry = observed.filter((p) => p.phase === 'worker').length > 1 || observed.some((p) => p.phase === 'diagnose' || p.pass === false || !p.complete)
+  const overdue = original?.pessimistic !== null && elapsed > original?.pessimistic
+  if (!original || retry || overdue) return { ...range([], 'insufficient-data'), unit: 'ms', reason: retry ? 'No comparable observed retry remainder' : 'No usable remaining forecast (missing or exceeded bounds)' }
+  return { ...original, ...Object.fromEntries(['optimistic', 'mostLikely', 'pessimistic'].map((k) => [k, original[k] === null || k === 'mostLikely' && elapsed >= original[k] ? null : Math.max(0, original[k] - elapsed)])), provenance: 'elapsed-original-forecast' }
+}
+
+function calibrationError(original, actualMs) {
+  if (!original || !Number.isFinite(actualMs)) return null
+  return { signedMs: original.mostLikely === null ? null : actualMs - original.mostLikely,
+    absoluteMs: original.mostLikely === null ? null : Math.abs(actualMs - original.mostLikely),
+    withinRange: original.optimistic === null || original.pessimistic === null ? null : actualMs >= original.optimistic && actualMs <= original.pessimistic }
+}
+
+function consumptionEvidence(f, window) {
+  const start = f.usageStart, end = f.usageEnd
+  const a = start?.windows?.[window], b = end?.windows?.[window]
+  if (f.actual?.status !== 'VERIFIED' || f.actual.censored || !f.actual.completed) return { reason: 'Run was not successfully completed' }
+  if (f.concurrentAccountActivity === true) return { reason: 'Concurrent account activity contaminated this observation' }
+  if (f.attribution?.exclusive !== true || !f.attribution?.source) return { reason: 'Concurrent account activity cannot be excluded; consumption is not attributable' }
+  if (!start?.accountId || start.accountId !== end?.accountId || start.accountId !== f.attribution.accountId) return { reason: 'Subscription account identity is missing or changed' }
+  if (![start?.sampledAt, end?.sampledAt, a?.used, b?.used, a?.resetsAt, b?.resetsAt].every(Number.isFinite)) return { reason: 'Missing subscription observations or reset identity' }
+  if (start.source !== end.source) return { reason: 'Subscription sample source changed' }
+  if (a.used < 0 || b.used > 100 || b.used < a.used) return { reason: 'Invalid or decreasing percentages' }
+  if (start.sampledAt > f.startedAt || f.startedAt - start.sampledAt > 900000 || end.sampledAt < f.actual.endedAt || end.sampledAt - f.actual.endedAt > 900000 || end.sampledAt <= start.sampledAt) return { reason: 'Stale or incomplete boundary observations' }
+  if (a.resetsAt !== b.resetsAt || a.resetsAt <= end.sampledAt) return { reason: 'Subscription window reset during observation' }
+  return { value: b.used - a.used }
+}
+
+function assessUsage(key, rows, current, guard, now, duration = null) {
+  const samples = comparableForecasts(key, rows, now)
+  const names = new Set([...Object.keys(current?.windows ?? {}), ...samples.flatMap((f) => Object.keys(f.usageStart?.windows ?? {}))])
+  if (!names.size) { names.add('five_hour'); names.add('seven_day') }
+  return Object.fromEntries([...names].map((name) => {
+    const window = current?.windows?.[name]
+    const fresh = Number.isFinite(current?.sampledAt) && current.sampledAt <= now && now - current.sampledAt <= 900000 && window?.resetsAt > now && Number.isFinite(window?.used) && window.used >= 0 && window.used <= 100
+    const evidence = samples.map((f) => current?.accountId && current.accountId === f.usageStart?.accountId ? consumptionEvidence(f, name) : { reason: 'No comparable subscription account identity' })
+    const estimate = { ...range(evidence.map((e) => e.value), 'observed-subscription-percentage-points'), unit: 'percentage-points' }
+    const headroom = fresh ? 100 - window.used : null
+    const guardHeadroom = fresh && guard?.enabled && Number.isFinite(guard.threshold) ? guard.threshold - window.used : null
+    const available = guardHeadroom === null ? headroom : Math.min(headroom, guardHeadroom)
+    const crossing = fresh && (samples.some((f) => now + f.actual.durationMs >= window.resetsAt) || Number.isFinite(duration?.pessimistic) && now + duration.pessimistic >= window.resetsAt)
+    const usable = fresh && !crossing && estimate.sampleCount > 0
+    const status = !usable ? 'unknown' : estimate.pessimistic <= available ? 'sufficient' : estimate.optimistic > available ? 'insufficient' : 'at-risk'
+    return [name, { status, headroom, guardHeadroom, estimate, scope: 'full-run-consumption',
+      reasons: !fresh ? ['Missing, stale or expired current window'] : crossing ? ['Forecast may cross this window reset'] : !estimate.sampleCount ? [...new Set(evidence.map((e) => e.reason).concat('Insufficient attributable comparable consumption data'))] : [] }]
+  }))
+}
+
+// The one pre-worker question: a window assessUsage already judged short. Unknown or missing data never asks.
+// `current` is a forecast update ({ usage, observation }); resetsAt is epoch ms, formatted by the caller.
+function usageRisk(current) {
+  const windows = Object.entries(current?.usage ?? {}).filter(([, a]) => a?.status === 'insufficient' || a?.status === 'at-risk').map(([window, a]) => {
+    const seen = current.observation?.windows?.[window]
+    const available = [a.headroom, a.guardHeadroom].filter(Number.isFinite)
+    return { window, status: a.status, used: seen?.used ?? null, resetsAt: seen?.resetsAt ?? null,
+      need: { optimistic: a.estimate?.optimistic ?? null, mostLikely: a.estimate?.mostLikely ?? null, pessimistic: a.estimate?.pessimistic ?? null, unit: 'percentage-points' },
+      available: available.length ? Math.min(...available) : null, headroom: a.headroom ?? null, guardHeadroom: a.guardHeadroom ?? null }
+  })
+  if (!windows.length) return null
+  const line = (w) => `${w.window} ${w.status}: ${w.used ?? '?'}% used, forecast needs ${w.need.optimistic ?? '?'}-${w.need.pessimistic ?? '?'} points, ${w.available ?? '?'} available`
+  return { reason: 'USAGE_RISK', windows, question: `The usage forecast says this run may exceed the usage available (${windows.map(line).join('; ')}). Continue anyway?` }
 }
 
 function isCell(choice, tiers) {
@@ -117,9 +212,10 @@ const ROUTE_SCHEMA = {
     readOnly: { type: 'boolean' },
     smallReason: { type: 'string' },
     estimatedMinutes: { type: 'integer' },
-    split: { type: 'array', items: { type: 'object', properties: { task: { type: 'string' }, scope: { type: 'array', items: { type: 'string' } } }, required: ['task', 'scope'] } },
+    optimisticMinutes: { type: 'integer' },
+    pessimisticMinutes: { type: 'integer' },
   },
-  required: ['model', 'effort', 'reason', 'goal', 'scope', 'verify', 'acceptance', 'allowTests', 'allowTestsReason', 'question', 'small', 'smallReason', 'estimatedMinutes', 'split'],
+  required: ['model', 'effort', 'reason', 'goal', 'scope', 'verify', 'acceptance', 'allowTests', 'allowTestsReason', 'question', 'small', 'smallReason', 'estimatedMinutes', 'optimisticMinutes', 'pessimisticMinutes'],
 }
 
 const WORKER_SCHEMA = {
@@ -187,7 +283,7 @@ function deadText(result) {
   return ''
 }
 
-async function measured(prompt, opts) {
+async function callAgent(prompt, opts) {
   const before = budget.spent()
   try {
     const result = await agent(prompt, opts)
@@ -202,6 +298,28 @@ async function measured(prompt, opts) {
     const message = String(e?.message ?? e)
     return { result: null, error: `failed: ${message.slice(0, 200)}`, limit: hardLimit(message), tokens: budget.spent() - before }
   }
+}
+
+// The host measures one real agent per call. Earlier outputs replay locally;
+// they never re-spend tokens. No clock, filesystem or tool API in this workflow.
+const journal = [...(args?.journal ?? [])]
+let replayIndex = args?.plan && journal[0]?.phase === 'route' ? 1 : 0
+let executed = false
+async function measured(prompt, opts) {
+  const phaseName = opts.label.split(' ')[0]
+  if (args.telemetry && replayIndex < journal.length) {
+    const entry = journal[replayIndex++]
+    if (entry.phase !== phaseName || entry.model !== opts.model || entry.effort !== opts.effort) throw new Error('Workflow journal does not match this plan')
+    return entry.measurement
+  }
+  if (args.telemetry && executed) throw { boundary: true }
+  executed = true
+  const measurement = await callAgent(prompt, opts)
+  if (args.telemetry) {
+    journal.push({ phase: phaseName, model: opts.model, effort: opts.effort, measurement })
+    replayIndex++
+  }
+  return measurement
 }
 
 const LIMIT_SUGGESTION = 'Run /model-ladder:run again after the limit resets; see HANDOFF.md.'
@@ -237,8 +355,7 @@ Also return:
 - small: true when the task touches one or two files and its design is already given (for example "implement this function as described"), so a capable model would finish it in one pass. Otherwise false.
 - smallReason: one sentence on why.
 - readOnly: true when the task only reads and reports (a review, an analysis, a question) and edits no file. Otherwise false.
-- estimatedMinutes: integer, your estimate of the wall-clock minutes from start until the verify step passes, including the time the tests take to run.
-- split: ${args.splitMinutes === 'off' ? 'always an empty array.' : `when estimatedMinutes is more than ${args.splitMinutes ?? DEFAULT_SPLIT_MINUTES}, the task cut into subtasks as an array of { task, scope } (task: one sentence a stranger could execute; scope: the files it changes), each verifiable on its own and run in order. Otherwise an empty array.`}`
+- estimatedMinutes (most likely), optimisticMinutes and pessimisticMinutes: positive integer wall-clock minutes for the FULL run, including routing, implementation, worker self-checks, test commands, independent verification, diagnosis and retry risk. Give an honest ordered range, not a guarantee.`
   const { result: r, error, limit, tokens } = await measured(prompt, {
     label: `route ${label(config.router)}`, phase: 'Route', schema: ROUTE_SCHEMA, agentType: 'model-ladder:router', ...config.router,
   })
@@ -263,7 +380,9 @@ Also return:
     question: r.question,
     readOnly: r.readOnly === true,
     direct,
-    splitSuggestion: args.forceLadder || direct || args.acceptSplit === false ? null : splitSuggestion(r.estimatedMinutes, r.split, args.splitMinutes),
+    estimatedMinutes: r.estimatedMinutes,
+    optimisticMinutes: r.optimisticMinutes,
+    pessimisticMinutes: r.pessimisticMinutes,
     directReason: `${r.smallReason} The calling session holds about ${args.contextTokens} tokens of context, ${Math.round(contextPercent(args.contextTokens, args.contextWindow))}% of a ${args.contextWindow > 0 ? args.contextWindow : DEFAULT_WINDOW}-token window; the DIRECT threshold is ${args.directThreshold === 'off' ? 'off' : `${args.directThreshold ?? DEFAULT_DIRECT_THRESHOLD}%`}.`,
     // Without a verify step the user, not the router, decides what done means.
     needsAcceptance: !verify && !args.acceptance?.length,
@@ -479,6 +598,7 @@ Explain to the user why it failed (reason) and what they can do next (suggestion
   return done('FAILED', null, final.result)
 }
 
+async function workflow() {
 if (!args?.task || !args?.config || !args?.protection) {
   throw new Error('model-ladder: this is the internal engine. Run /model-ladder:run <task> instead; it prepares these args and applies the result.')
 }
@@ -496,14 +616,26 @@ if (plan.limited) {
 }
 // The caller does a small task itself when its own context makes orchestration the bigger cost.
 if (!args.plan && plan.direct) {
-  return { status: 'DIRECT', plan: { goal: plan.goal, directReason: plan.directReason }, attempts: [], tokens: plan.routeTokens }
+  return { status: 'DIRECT', plan, attempts: [], tokens: plan.routeTokens }
 }
-// An unclear task is clarified first (its estimate would be a guess). Then a long one is offered in parts,
-// before asking for acceptance criteria that would belong to the whole.
+// Questions and user acceptance gate execution; a forecast short on usage asks once, below.
 if (!args.plan && plan.question) return { status: 'NEEDS_INPUT', plan }
-if (!args.plan && plan.splitSuggestion) return { status: 'NEEDS_INPUT', plan }
 if (!args.plan && plan.needsAcceptance) return { status: 'NEEDS_INPUT', plan }
 // With a run lock (runId from preflight) the skill first claims plan.scope against other active runs
 // (scripts/claim.mjs), then calls again with the plan.
 if (!args.plan && args.runId) return { status: 'ROUTED', plan }
+// The skill passes the forecast its boundary recorder returned after routing. Only an explicit yes continues,
+// and only before the first worker: replayed continuations never ask again. usageGuard and limits still apply.
+const risk = args.acceptUsageRisk === true || journal.some((e) => e.phase === 'worker') ? null : usageRisk(args.forecast?.current)
+if (risk) return { status: 'NEEDS_INPUT', reason: 'USAGE_RISK', plan, usageRisk: risk }
 return await run(plan)
+}
+
+try {
+  const result = await workflow()
+  return args?.telemetry ? { ...result, journal } : result
+} catch (error) {
+  if (args?.telemetry && error?.boundary) return { status: 'BOUNDARY', journal }
+  if (args?.telemetry) return { status: 'ERROR', journal, error: String(error?.message ?? error) }
+  throw error
+}

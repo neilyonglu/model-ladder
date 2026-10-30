@@ -35,7 +35,7 @@ Claude Code uses a Workflow; Codex uses a standalone Node runner.
 | Main session | Handle questions, DIRECT work, summaries, and handoff context. |
 
 Claude Router has Read, Grep, and Glob; workers and verifiers inherit available tools except Workflow and Agent, with verifier writes forbidden.
-Codex role processes use explicit models, schemas, ephemeral sessions, and the existing sandbox and approval controls.
+Codex role processes use explicit models, schemas, persisted rollouts for usage sampling, and the existing sandbox and approval controls.
 
 ```text
 validate -> snapshot -> route -> claim scope -> worker -> verifier -> apply
@@ -110,7 +110,7 @@ The hook is best effort and fails open if Node is unavailable; final diff checks
 | DIRECT | Small task plus measured context at `direct_threshold`; never verified by the routing decision alone. |
 | Claude DIRECT | Main session edits, then a separate verifier checks, with at most three correction rounds. |
 | Codex DIRECT | Caller edits an isolated draft, then `directRun` reclaims scope, checks the baseline, verifies, and applies. |
-| Split | Above `split_minutes`, the user chooses sequential parts, whole task, or stop. |
+| Forecast | Duration ranges, observed phase timings and per-window headroom; elapsed/expected in the panel; one usage-risk confirmation before the worker when a window is insufficient or at risk; no split confirmation. |
 | Force ladder | `forceLadder` disables DIRECT and split suggestions. |
 | Timeout | Idle time without output, configured by `timeoutMs`. |
 | Codex resume | Validate checkout, task, acceptance, and configuration before continuing a draft in a fresh worktree. |

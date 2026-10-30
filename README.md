@@ -24,7 +24,7 @@ model-ladder is a [Claude Code](https://code.claude.com) and Codex plugin. The R
 - **Isolated Git worktrees**: each attempt runs in its own worktree.
 - **Escalation when appropriate**: verification failure may lead to a stronger model or higher effort.
 - **DIRECT for small tasks**: when actual session context reaches the configured threshold, the session handles small tasks and still submits them for independent verification.
-- **Split suggestions**: tasks estimated above `split_minutes` offer a choice to run in parts, run whole, or stop.
+- **Forecasts**: the panel time column shows elapsed/expected (for example `5s/12m`), and when the startup forecast says a subscription window is insufficient or at risk, the ladder asks once before any worker starts; long tasks run without split confirmation.
 - **Concurrent runs**: runs with separate file scopes can proceed together, with overlap checks and serialized application of results.
 - **Automatic routing and layered settings**: session hooks enable the ladder by default, with personal settings and project overrides.
 - **Protected tests**: workers cannot modify tests unless the task explicitly asks for test changes.
@@ -67,7 +67,7 @@ Restart Claude Code after installing; top-level tasks then go through `/model-la
 5. **Answer prompts**: confirm work on uncommitted changes, clarify unclear tasks, and choose whether to split a large task, run it whole, or stop.
 6. **Read the result**: completion requires verification, and the report lists changed files, checks, and remaining limits, with no commit or push by default.
 7. **Hand off and resume**: request a handoff when needed, or wait for quota reset after a usage stop and follow `.model-ladder/HANDOFF.md` to resume.
-8. **Set up verification**: ask for `create-verification-skill` to create a verification workflow and `maintain-verification-skill` to keep it current.
+8. **Set up project verification**: model-ladder bundles the pstack-derived [`create-verification-skill`](skills/create-verification-skill/SKILL.md) and [`maintain-verification-skill`](skills/maintain-verification-skill/SKILL.md) for Claude Code, with [Codex versions](codex-skills/) in the Codex plugin. In Claude Code, run `/model-ladder:create-verification-skill` or `/model-ladder:maintain-verification-skill`. In Codex, ask it to use the `create-verification-skill` or `maintain-verification-skill` skill. These skills generate or maintain a verification driver tailored to the target project. This repository already has its own driver at [`.agents/skills/verify/SKILL.md`](.agents/skills/verify/SKILL.md); it verifies model-ladder and is not a generic driver for other projects. See the [third-party notice](NOTICE.md) for the source and license.
 
 See [advanced usage](USAGE.md) for report examples, runner commands, concurrent runs, and run files, and [Band](#band-claude-code) for panel controls.
 
@@ -85,12 +85,11 @@ For Claude settings outside the plugin screen, use `~/.claude/model-ladder.json`
 | `worker_skills` (**Worker skill instructions**) | Empty | Skills or tools for workers and test-writers. |
 | `verifier_skills` (**Verifier skill instructions**) | Empty | Skills or tools for verification. |
 | `direct_threshold` | `30` | Context percentage for small tasks to use DIRECT; `off` disables it. |
-| `split_minutes` | `20` | Suggest splitting tasks estimated above this duration; `off` disables it. |
 | `usageGuard` | On, `90%` | Stop at the configured usage threshold. |
 
 Project settings in `.claude/model-ladder.json` or `.codex/model-ladder.json` override personal settings; keep usage protection in your personal file unless the project needs an override.
 
-Use one rule per line: `project: instructions` matches the main repo folder name exactly, while unprefixed rules apply everywhere.
+Use one rule per line: `project: instructions` matches the main repo folder name exactly, while lines without a `project: ` prefix apply everywhere.
 
 ```json
 {

@@ -8,18 +8,20 @@
 //   USAGE_LIMIT usageGuard is on and the subscription usage is at the threshold -> stop
 //   READY       workflowArgs to pass to the model-ladder:ladder workflow
 // Settings: defaults, then ~/.claude/model-ladder.json (personal), then .claude/model-ladder.json (project).
-// `--plugin-options` reads {"worker_skills", "verifier_skills", "direct_threshold", "split_minutes"} on stdin: the plugin's userConfig values, the
+// `--plugin-options` reads {"worker_skills", "verifier_skills", "direct_threshold"} on stdin: the plugin's userConfig values, the
 // defaults for every project; a project key of the same name wins, and an unfilled "${...}" counts as unset.
+// The same stdin may carry "task": the lock keeps it, with phase 'preflight', for the band's main-session row.
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { ALWAYS_PROTECTED, TEST_PATTERNS } from '../hooks/guard.mjs'
-import { ensureGitExclude, git, print, pruneRuns, repoRoot, runDir, tryGit, worktrees } from './common.mjs'
-import { clearStale, clearStaleFlag, createLock, readLocks, releaseLock, runFiles, withMutex } from './runs.mjs'
+import { artifactDir, ensureGitExclude, git, print, pruneRuns, repoRoot, runDir, tryGit, worktrees } from './common.mjs'
+import { clearStale, clearStaleFlag, createLock, readLocks, releaseLock, withMutex } from './runs.mjs'
 import { GUARD_DEFAULT } from '../hooks/config-layers.mjs'
 import { loadLayered, userConfigPath } from './config.mjs'
+import { startForecast } from './forecast.mjs'
 import { claudeGuard, guardStops } from './usage-guard.mjs'
 
 export const DEFAULTS = {
@@ -41,8 +43,6 @@ export const DEFAULTS = {
   verifier_skills: '',
   // A small task goes DIRECT when the session holds at least this % of its context window, or "off".
   direct_threshold: 30,
-  // A task the router estimates at more than this many minutes is offered in parts, or "off".
-  split_minutes: 20,
 }
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max']
 const OWN = [':!.claude/worktrees', ':!.model-ladder']
@@ -66,8 +66,6 @@ export function loadConfig(root, pluginOptions = {}) {
   if (typeof guard.threshold !== 'number' || !(guard.threshold >= 1 && guard.threshold <= 100)) problems.push('usageGuard.threshold must be a number from 1 to 100')
   const dt = config.direct_threshold
   if (dt !== 'off' && !(typeof dt === 'number' && dt > 0 && dt <= 100)) problems.push('direct_threshold must be a number from 1 to 100, or "off"')
-  const sm = config.split_minutes
-  if (sm !== 'off' && !(typeof sm === 'number' && sm > 0)) problems.push('split_minutes must be a number of minutes greater than 0, or "off"')
   for (const key of ['worker_skills', 'verifier_skills']) if (typeof config[key] !== 'string') problems.push(`${key} must be a string of skill instructions`)
   return { config, problems }
 }
@@ -106,9 +104,10 @@ function main(flags) {
   }
 
   let pluginOptions = {}
+  let task = null
   if (flags.has('--plugin-options')) {
     try {
-      pluginOptions = JSON.parse(readFileSync(0, 'utf8').trim() || '{}')
+      ;({ task = null, ...pluginOptions } = JSON.parse(readFileSync(0, 'utf8').trim() || '{}'))
     } catch (e) {
       return { status: 'ERROR', message: `The plugin options on stdin are not valid JSON (${e.message}). Escape quotes and line breaks in the values as JSON and run preflight again.` }
     }
@@ -142,8 +141,8 @@ function main(flags) {
   const protection = { always: [...ALWAYS_PROTECTED, ...config.protected], tests: TEST_PATTERNS }
   const runId = `claude-${randomUUID()}`
   // Claude Code has no process that lives for the whole run, so pid is null: finish removes the lock.
-  createLock(root, { runId, runtime: 'claude', pid: null, protected: protection.always, tests: protection.tests })
-  const run = runFiles(root, runId)
+  createLock(root, { runId, runtime: 'claude', pid: null, protected: protection.always, tests: protection.tests, task: typeof task === 'string' ? task.trim() : null, phase: 'preflight' })
+  const run = join(artifactDir(root), runId)
   mkdirSync(run, { recursive: true })
 
   try {
@@ -168,7 +167,8 @@ function main(flags) {
       setupFiles = g('diff', '--cached', '--name-only', 'HEAD').split('\n').filter(Boolean)
     }
 
-    writeFileSync(join(run, 'state.json'), JSON.stringify({ baseTree, before: worktrees(root).map((w) => w.path), config }, null, 2))
+    const forecast = { ...startForecast(root, 'claude', config), runId }
+    writeFileSync(join(run, 'state.json'), JSON.stringify({ baseTree, before: worktrees(root).map((w) => w.path), config, forecast }, null, 2))
 
     return {
       status: 'READY',
@@ -182,7 +182,7 @@ function main(flags) {
         setupPatch,
         setupFiles,
         directThreshold: config.direct_threshold,
-        splitMinutes: config.split_minutes,
+        telemetry: true,
         ...measuredContext(root),
         skills: { worker: config.worker_skills, verifier: config.verifier_skills },
         // Always passed, guard on or off: the command reads the settings each time, so the person's switch

@@ -10,12 +10,17 @@ import { readFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 import { print, repoRoot } from './common.mjs'
 import { claimScope, clearStaleFlag } from './runs.mjs'
+import { setPhase } from './phase.mjs'
 
 export function main(input, flags) {
   if (typeof input?.runId !== 'string' || !input.runId) return { status: 'ERROR', message: 'input needs runId, the runId preflight printed' }
   if (!input.readOnly && !Array.isArray(input.scope)) return { status: 'ERROR', message: "input needs scope, the plan's scope list" }
   const force = clearStaleFlag(flags)
-  return claimScope(repoRoot(), input.runId, { scope: input.scope, readOnly: input.readOnly === true, clear: force !== false, force: typeof force === 'string' ? force : null })
+  const root = repoRoot()
+  const out = claimScope(root, input.runId, { scope: input.scope, readOnly: input.readOnly === true, clear: force !== false, force: typeof force === 'string' ? force : null })
+  // The band's main-session row shows the phase; a failed phase write never fails the claim.
+  if (out.status === 'READY') { try { setPhase(root, input.runId, 'claimed') } catch {} }
+  return out
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
