@@ -2,7 +2,8 @@
 
 [English](NOTICE.md)
 
-`skills/create-verification-skill/`、`skills/maintain-verification-skill/`，以及 `codex-skills/` 下的 Codex 改編版本，來自 [pstack-claude](https://github.com/michael-denyer/pstack-claude)（上游為 `cursor/plugins/pstack`）。Codex 改編版以原生 Codex skill 路徑取代 Codex/Copilot/Muse 平台對照行。Claude 版本則移除這些行，並將 `/maintain-verification-skill` 更名為 `/model-ladder:maintain-verification-skill`。
+`skills/`、`codex-skills/` 下的驗證技能改編自 [pstack-claude](https://github.com/michael-denyer/pstack-claude)，上游為 `cursor/plugins/pstack`。
+改編版使用原生 Codex 路徑或移除 Claude 的平台對照，Claude 維護指令更名為 `/model-ladder:maintain-verification-skill`。
 
 ## MIT 授權條款繁體中文譯文
 

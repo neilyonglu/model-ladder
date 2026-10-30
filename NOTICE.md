@@ -2,7 +2,8 @@
 
 [繁體中文](NOTICE.zh-TW.md)
 
-`skills/create-verification-skill/`, `skills/maintain-verification-skill/`, and their Codex adaptations under `codex-skills/` come from [pstack-claude](https://github.com/michael-denyer/pstack-claude) (upstream: cursor/plugins/pstack). Codex adaptations replace Codex/Copilot/Muse platform-mapping lines with native Codex skill paths. Claude versions remove those lines and rename `/maintain-verification-skill` to `/model-ladder:maintain-verification-skill`.
+Verification skills under `skills/` and `codex-skills/` are adapted from [pstack-claude](https://github.com/michael-denyer/pstack-claude), upstream `cursor/plugins/pstack`.
+Adaptations use native Codex paths or remove platform mappings for Claude, and rename the Claude maintenance command to `/model-ladder:maintain-verification-skill`.
 
 MIT License
 

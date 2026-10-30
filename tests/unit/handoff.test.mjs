@@ -182,7 +182,7 @@ test('docs mention the AI-written handoff and the availability warning in both l
   for (const file of ['README.md', 'README.zh-TW.md', 'DESIGN.md', 'DESIGN.zh-TW.md']) {
     assert.match(read(file), /\/model-ladder:handoff/, file)
   }
-  for (const file of ['README.md', 'README.zh-TW.md']) assert.match(read(file), /ponytail` (is not available|在這個專案無法使用)/, file)
+  for (const file of ['USAGE.md', 'USAGE.zh-TW.md']) assert.match(read(file), /ponytail` (is not available|在這個專案無法使用)/, file)
   for (const file of ['CHANGELOG.md', 'CHANGELOG.zh-TW.md']) {
     const changelog = read(file)
     assert.match(changelog, /\/model-ladder:handoff/, file)

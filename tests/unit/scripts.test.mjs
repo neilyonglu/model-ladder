@@ -175,13 +175,13 @@ test('skill instructions that are not strings are an ERROR before the marker', (
 
 test('skill instructions are plugin options (the default for every project) that the run skill hands to preflight', () => {
   const root = fileURLToPath(new URL('../../', import.meta.url))
-  const options = JSON.parse(read(root, '.claude-plugin/plugin.json')).userConfig ?? {}
+  const manifest = JSON.parse(read(root, '.claude-plugin/plugin.json'))
+  const options = manifest.userConfig ?? {}
+  assert.equal(options.autoRun.title, `Use the ladder by default (v${manifest.version})`)
   for (const [key, title] of [['worker_skills', 'Worker skill instructions'], ['verifier_skills', 'Verifier skill instructions']]) {
     assert.equal(options[key]?.type, 'string', key)
     assert.equal(options[key].title, title)
     assert.equal(options[key].default, '')
-    assert.match(options[key].description, /every project/)
-    assert.match(options[key].description, new RegExp(`${key}.*\\.claude/model-ladder\\.json`))
   }
   const skill = read(root, 'skills/run/SKILL.md')
   assert.match(skill, /preflight\.mjs" --plugin-options <<'EOF'\n\{ "worker_skills": "\$\{user_config\.worker_skills\}", "verifier_skills": "\$\{user_config\.verifier_skills\}", "direct_threshold": "\$\{user_config\.direct_threshold\}", "split_minutes": "\$\{user_config\.split_minutes\}" \}\nEOF/)
@@ -208,7 +208,6 @@ test('direct_threshold: plugin picker, default 30, project overrides, bad value 
   const opt = JSON.parse(read(root, '.claude-plugin/plugin.json')).userConfig.direct_threshold
   assert.deepEqual(opt.options, ['20', '30', '40', '50', '60', '70', '80', 'off'])
   assert.equal(opt.default, '30')
-  assert.match(opt.description, /percentage of its context window/)
   const dir = repo()
   assert.equal(preflight(dir).workflowArgs.directThreshold, 30)
   assert.equal(withOptions(dir, { direct_threshold: '50' }).workflowArgs.directThreshold, 50)

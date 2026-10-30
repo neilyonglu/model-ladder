@@ -1,163 +1,158 @@
 # model-ladder 設計
 
-[English](DESIGN.md)
+[README](README.zh-TW.md) · [進階使用](USAGE.zh-TW.md) · [English](DESIGN.md)
 
-維護者說明。使用者文件見 [README.zh-TW.md](README.zh-TW.md)。router model 選擇起點並診斷失敗，程式碼強制升級規則。支援 Claude Code 與 Codex。
+## 目標
 
-## 目標與版面配置
+選擇合適的模型與 effort，獨立驗證、保留既有工作，只套用通過驗證的變更。
+Claude Code 使用 Workflow，Codex 使用獨立 Node runner。
 
-目標是以比高 effort 強模型更低的每件已驗證任務成本完成工作，不經驗證不回報完成，不碰未提交工作，以兩個命令安裝且不需 proxy 或 API key。非目標是 Gemini、best-of-N、dollar cost。
+## 模組
 
-```text
-.claude-plugin/ .codex-plugin/ .agents/plugins/   manifests (same name and version), marketplace
-skills/run/SKILL.md            Claude entry: preflight, workflow, finish
-skills/handoff/SKILL.md        /model-ladder:handoff: main session writes HANDOFF.md
-codex-skills/model-ladder/     Codex entry: packaged Node runner
-workflows/ladder.js            Claude orchestration + canonical pure rules
-agents/                        router, worker, test-writer, verifier
-scripts/  preflight.mjs finish.mjs common.mjs            Claude config, snapshot, apply, report
-          codex-run.mjs codex-exec.mjs codex-worktree.mjs codex-usage.mjs codex-live.mjs watch.mjs
-          usage-statusline.mjs sync-rules.mjs update-check.mjs
-hooks/    hooks.json codex-hooks.json autorun.mjs guard.mjs band.json band/
-tests/    unit/ helpers/ fixture-repo/ e2e/
-```
-
-`workflows/ladder.js` 的 pure block 是 canonical。`scripts/sync-rules.mjs` 產生供 Node import 的 `scripts/ladder-rules.mjs`，unit test 拒絕 drift。
-
-## 角色、設定與合法移動
-
-| 角色 | 模型／effort | 工具 | 工作 |
-|---|---|---|---|
-| 技能（主 session） | sonnet / medium | 全部 | 執行兩個 script 與 workflow，並詢問使用者 |
-| Router | `router` (sonnet/low) | Read、Grep、Glob | 選擇起始 cell、診斷失敗、撰寫最終說明 |
-| Worker／test-writer | 目前 cell | Read、Grep、Glob、Edit、Write、Bash | 在新的 worktree 依 brief 實作 |
-| Verifier | 有 verify 命令時使用 `verifier` (haiku/low)，否則使用 router | Read、Grep、Glob、Bash | 檢查保護規則、執行 verify，或判斷是否符合 acceptance |
-
-命令由 cheap verifier 執行，criteria 由 router model 判斷。Skill 固定 sonnet/medium，因為它執行 `git apply` 與移除 worktree。Key、default 與意義見 [README Configure](README.md#configure)。`scripts/preflight.mjs` 的 `DEFAULTS` 是 source of truth。top-level key 取代 default，僅 `usageGuard` 逐欄位 merge。`preflight.mjs` 驗證並列出每個問題。Codex 使用自己的 `.codex/model-ladder.json` defaults（`scripts/codex-run.mjs`）。
-
-設定分層：預設值 → 使用者檔 → 專案檔。使用者檔為 `~/.claude/model-ladder.json` 或 `~/.codex/model-ladder.json`（`CLAUDE_CONFIG_DIR`／`CODEX_HOME` 取代家目錄；`MODEL_LADDER_USER_CONFIG` 直接指定檔案，所有 unit test 都透過 `tests/helpers/isolate-home.mjs` 設定它）。個人習慣（`usageGuard`）放這裡，會 commit 的專案檔不會帶著某個人的開關；專案若寫了 `usageGuard` 仍會覆蓋，保持相容。preflight、`usage-guard.mjs`、band（透過 `$.fs`／`$.env`）、Codex runner 與 `watch.mjs` 共用同一個純函式模組 `hooks/config-layers.mjs`（`mergeConfig`、`userConfigPath`、`pluginLayer`、`setGuard`）；`scripts/config.mjs` 是它的 Node 讀寫端。
-
-Claude Code 的 skill 指示：plugin userConfig 的 `worker_skills`／`verifier_skills` 是所有專案的預設。`skills/run/SKILL.md` 把 `${user_config.worker_skills}`／`${user_config.verifier_skills}` 以 JSON 交給 `preflight.mjs --plugin-options`；`pluginLayer` 丟棄仍含 `${` 的值（未填入），其餘放進使用者層，所以專案檔有同名鍵（即使是空字串）就以專案為準。preflight 輸出合併後的 `workflowArgs.skills`，band 以自己的 `options` 用同樣方式合併。Codex 沒有設定介面，從自己的設定檔讀取。
-
-Usage guard 的開關只屬於使用者：`usageGuard.enabled` 只會因使用者的明確操作改變（band 開關、`watch.mjs` 的 `g`／`--guard`、手動編輯設定檔）。band 門檻欄位與 `t`／`--threshold` 寫入 `setGuard(user, { threshold })`，只改一個欄位，關閉的 guard 維持關閉。band 的 `enabled ?? true` 等預設只用於顯示，從不寫回。finish、preflight 與 setup patch 都不寫任何設定檔。guard 的寫入一律寫使用者檔；專案檔固定該欄位時，band 以 toast、`watch.mjs` 以訊息說明，不改寫專案檔。Codex checkpoint 比對會忽略 `usageGuard`，切換開關不會擋住 resume。
-
-| 移動方式 | 規則 |
+| 模組 | 職責 |
 |---|---|
-| 同 tier 提高 effort | 最多移動 `maxEffortJump` 個 effort 階級 |
-| 升到下一 tier | 只能升到 `tier + 1`，effort 可任選（也可較低，例如 sonnet/high -> opus/low） |
-| 降級、橫向移動或跳過 tier | 不允許 |
+| `skills/run/` | Claude 前置檢查、路由、詢問、workflow 與收尾。 |
+| `codex-skills/model-ladder/` | Codex runner 初始化與結果處理。 |
+| `workflows/ladder.js` | Claude 協調流程與升級規則的原始來源。 |
+| `scripts/preflight.mjs`、`claim.mjs`、`finish.mjs` | 驗證、snapshot、認領範圍、套用與清理。 |
+| `scripts/codex-run.mjs` | Codex 路由、嘗試、驗證、診斷與套用。 |
+| `scripts/codex-exec.mjs`、`codex-worktree.mjs` | 子程序、schema 與 worktree 安全。 |
+| `scripts/runs.mjs` | 共用鎖、範圍檢查與套用 mutex。 |
+| `hooks/config-layers.mjs`、`scripts/config.mjs` | 設定合併與 Node 檔案存取。 |
+| `hooks/guard.mjs` | 提前阻擋 worker 修改受保護路徑。 |
+| `scripts/usage-guard.mjs` | 用量檢查與已註冊 runner 的停止。 |
+| `hooks/band/`、`scripts/watch.mjs`、`codex-hud.mjs` | Claude Band 與 Codex 終端顯示。 |
+| `scripts/sync-rules.mjs` | 從 workflow 純函式產生 `scripts/ladder-rules.mjs`。 |
 
-`legalMoves(cell, tiers)` 是 pure。workflow 將 legal list 交給 router。非法或 malformed answer 的 default move 是同 tier 下一個 effort，否則下一 tier 最低 effort。
+## 角色與流程
 
-## 流程
+| 角色 | 職責與限制 |
+|---|---|
+| Router | 選擇起點、範圍、驗證方式與合法下一步。 |
+| Worker | 在隔離 worktree 完成一次嘗試，不修改受保護輸入。 |
+| Test-writer | 處理明確要求的測試變更，遵守相同 worker 限制。 |
+| Verifier | 獨立檢查 diff 與驗收條件，不修正程式。 |
+| 主 session | 處理詢問、DIRECT、摘要與交接情境。 |
 
-```text
-1. node scripts/preflight.mjs     -> READY + runId + workflowArgs, or a status needing the user
-2. Workflow model-ladder:ladder   -> ROUTED | NEEDS_INPUT | DIRECT (first call, routes only)
-   node scripts/claim.mjs         -> READY, or NEEDS_INPUT (overlap) / STALE_RUN
-   Workflow model-ladder:ladder   -> VERIFIED | FAILED | STOPPED | USAGE_LIMIT (called again with plan)
-3. node scripts/finish.mjs        -> apply, cleanup, history, report
-```
-
-確定性工作在 scripts 中，約每個 main session 五次 model calls。workflow 不能碰 filesystem。`ERROR` 代表非有 commit 的 git repo 或 invalid config；`STALE_RUN`（鎖的 pid 已不存在、鎖無法讀取，或舊版 `run.json`）用 `--clear-stale`；`OVERRIDDEN`（`CLAUDE_CODE_EFFORT_LEVEL` / `CLAUDE_CODE_SUBAGENT_MODEL_FORCE`）用 `--ignore-env`；`DIRTY` 用 `--allow-dirty`；`USAGE_LIMIT`（recorded usage >= threshold）等待 reset，不寫鎖；`READY` 帶有 `runId`，以及含 `runId`、config、protection、`hasVerifySkill`、setup patch/files 的 `workflowArgs`。
-
-Dirty run 以 `GIT_INDEX_FILE` snapshot，不碰 real index。`baseTree` 是 HEAD 加變更（含 untracked），`setup.patch` 是 `git diff --cached --binary HEAD`，worker 先套用，`setupFiles` 免 protected check。clean tree 的 `baseTree` 是 `HEAD^{tree}`。run files 位於 `<repo>/.model-ladder/`：鎖 `runs/<runId>.json`；該 run 的 `state.json`、`setup.patch`、temporary index 與衝突時的 `result.patch` 在 `runs/<runId>/`；共用的 `history.jsonl`、`usage.json`、`HANDOFF.md`。不放在 `.git` 或 `.claude`，因 headless run 無法刪除或編輯後兩者。
-
-### 同時執行
-scope 不重疊的 run 可並行，Claude Code 與 Codex 之間也會互相協調（`scripts/runs.mjs`，兩個 runtime 與 guard 共用）。
-
-- 鎖：`.model-ladder/runs/<runId>.json` = `{ runId, runtime, pid, startedAt, protected, tests, scope, readOnly }`，以 rename 整檔寫入。認領前 `scope` 為 null。Codex 記錄 runner 的 pid。Claude Code 記錄 `pid: null`：它的 scripts 在步驟之間就結束，也拿不到 session 的 pid，因此存活狀態未知，鎖在 finish 移除前都視為作用中。
-- 認領：route 後，run 認領 router 的 `scope`（`claimScope`，在 `registry` mutex 內，兩個認領不會互相放行）。Claude Code：`args.runId` 有值時 workflow 回傳 `ROUTED`，skill 執行 `scripts/claim.mjs`，再帶 `plan` 呼叫 workflow。Codex 在 runner 內認領。尚未認領的鎖會略過，輪到它們認領時再與本 run 比對。Read-only run 不認領、也不擋人。
-- 重疊判斷（保守）：條目先正規化（`\` 轉 `/`、去掉 `./`、轉小寫）；字面路徑涵蓋自己與其下所有檔案，glob 涵蓋第一個萬用字元前的目錄；兩條目的 base 有包含關係即重疊。空 scope、`**`、`*`、`.`、絕對路徑或含 `..` 的路徑都變成 `**`（整個 repo）。與作用中 run 重疊回傳 `NEEDS_INPUT`，附 `reason: "OVERLAP"` 與 `overlaps`；與過期的鎖重疊回傳 `STALE_RUN`。被擋下的 run 不認領任何東西，也不碰另一個鎖。
-- 過期：pid 已不存在、無法讀取，或沒有 pid 的舊版 `.model-ladder/run.json`。Preflight 與 Codex runner 遇到任何過期鎖都回傳 `STALE_RUN`；`--clear-stale` / `clearStale: true` 只移除過期鎖。`--clear-stale=<runId>` / `clearStale: "<runId>"` 另外移除該鎖（當掉的 Claude Code session），除非其 pid 仍存活。
-- 相容：舊版的 `run.json` 視為 scope 為 `**` 的另一個 run。pid 存活（舊版 Codex runner）時擋下所有認領；沒有 pid 時視為過期。沒有 `runId` 的 finish 會收尾舊版 preflight 開始的 run（最上層的 `state.json`、`run.json`）。
-- 套用：結果在 `apply` mutex 內一次一個 run 寫入工作目錄（Codex `applyResult`、Claude Code finish，含 `commit`）。patch 套不上仍是 `CONFLICT` 並保留 patch，作為 router scope 預估錯誤時的安全網。Preflight 與 Codex runner 的 dirty 檢查與 snapshot 也取同一個 mutex，不會讀到套用到一半的檔案。
-- Mutex：獨佔檔 `runs/<name>.lock`，內含持有者 pid。持有者存活就等待（每 50 ms 檢查、5 分鐘逾時；Codex 套用逾時視為 `CONFLICT`）；持有者已死則以 rename 接手，並確認搬走的是剛讀到的那個檔。
-- Dirty：另一個 run 已套用但未 commit 的變更就是未提交變更，`DIRTY` 照樣詢問。同意是安全的：run 會 snapshot 這些變更，且只套用自己的檔案。
-- Guard：合併所有可讀鎖的 `protected`（`worker` 另加 `tests`），過期鎖也算；無法讀取的鎖不增加規則，也不關閉其他規則。
-- 清理：`pruneRuns` 略過任何作用中鎖提到的 run dir（其 `runId` 或 `resumeRun`）。Finish 移除自己 attempts 回報的 worktree；`.claude/worktrees/` 下其他新出現的 worktree（worker 回報前就死掉）只在沒有其他 Claude Code 鎖、且沒有先前 run 保留它（`history.jsonl` 的 `kept`）時才移除。Codex worktree 在 temp dir，不在候選內。
-- 未分開的部分：`live.json` 與 Codex panel 顯示最後發布的 run；`HANDOFF.md` 共用。Claude DIRECT 在 finish 釋放鎖後由 session 修改。Codex DIRECT 先認領 scope 並建立隔離草稿，交給對話時釋放鎖，回到 runner 後再認領並核對基線。
-
-長 session 重讀 caller context 可能比 cheap worker 節省的成本高。任務小（router `small`：一或兩檔，design given）且 session context 達 window 的 `direct_threshold` 百分比（skill 傳 `contextTokens` / `contextWindow`；預設 30，`off` 為永不；plugin 選項，專案可覆蓋）時回傳 `DIRECT`。threshold 是 code，不由 router 判斷，因 sonnet/low 曾誤讀 about 500000 tokens。`--ladder` 設 `forceLadder`。skill 在 session 內完成 direct 任務後，會對 diff 派出 `model-ladder:verifier`（設定中 `verifier` 的 model/effort，預設最便宜層級），只檢查不修改，依 verify 指令或驗收條件判斷。失敗原因交回 session 修正後再驗（最多三輪）。Codex 僅在呼叫端提供實際 context 資料時走 DIRECT，修改隔離草稿後由 runner 獨立驗證。 DIRECT 仍需一次 router call，threshold 未量測。
-
-Router 回傳 start cell + reason、goal、scope、verify step、acceptance criteria、`allowTests` + reason 與可選 `question`。任務太模糊時才有 `question`，避免 "make the shop better" 因 green tests 通過。verify source 依序為 config `verify`、`.claude/skills/verify/`、existing test suite（router 不能自行寫 check，包括 one-line assert）、或 `needsAcceptance`。來自 pstack 的 `/model-ladder:create-verification-skill` 產生 `.claude/skills/verify/`，`/model-ladder:maintain-verification-skill` 維護它。`NEEDS_INPUT` 提早回傳，skill 詢問後再呼叫。Router 另回傳 `estimatedMinutes`（到 verify 通過的牆鐘時間，含測試）與 `split`（`[{ task, scope }]`，不超過門檻時為空）。預估超過 `split_minutes`（預設 20，`off` 為永不）、`split` 非空，且不是 `forceLadder` 或 `DIRECT` 時，workflow 回傳 `NEEDS_INPUT`，帶 `plan.splitSuggestion = { estimatedMinutes, limit, parts }`；順序在 `question` 之後、acceptance 之前。skill 詢問分段／整個照跑／停止：分段時每個子任務各自完整跑一次，整個照跑則帶 `acceptSplit: false` 再呼叫。比較由 code 判斷，預估是 router 的猜測。Codex 使用相同的 split_minutes 規則，回傳 NEEDS_INPUT 與 reason SPLIT。
+Claude Router 僅有 Read、Grep、Glob；worker 與 verifier 繼承可用工具但禁用 Workflow、Agent，且 verifier 不得寫檔。
+Codex 角色使用明確模型、schema、暫時 session，以及既有 sandbox 與核准控制。
 
 ```text
-cell = start; history = []
-for attempt in 1..maxAttempts:
-    w = worker(brief(cell, history, hint))      # isolation: worktree
-    v = verifier(w.worktreePath)                # skipped if w died, blocked or changed nothing
-    history.push({cell, w, v, tokens})
-    if v.pass: return VERIFIED
-    if attempt == maxAttempts or no legal moves: break
-    d = router.diagnose(history, legalMoves(cell))
-    if d.action starts with "stop_": return STOPPED
-    cell = d.choice if legal else defaultMove(cell); hint = d.hint
-final = router.explain(history); return FAILED
+檢查 -> snapshot -> 路由 -> 認領範圍 -> worker -> verifier -> 套用
+                                       ^          |
+                                       +-- 診斷失敗
 ```
 
-每次 attempt 從 base 的 clean worktree 開始，只帶 failure summaries 與 hints。`agent()` death 的 null 與 invalid structured output 的 throw 都是 failed step。只有 failed route 會 stop。例外是硬上限：throw 的錯誤訊息若表示 Claude 訂閱額度已用完（pure section 的 `hardLimit()`：「hit your session limit」、usage limit、rate limit、429、too many requests），不論在 route、worker、verifier、diagnosis 或 final diagnosis，都立即以 `USAGE_LIMIT` 停止、不再派下一個 agent；`final.reason` 帶角色、訊息中的重置時間與原始訊息。這與 `usageGuard` 無關。null 沒有訊息，無聲死亡仍算一般 failed step。Usage guard：preflight 一律傳 `usageGuard.command`（`scripts/usage-guard.mjs --root <repo>`），verifier 最後執行並把輸出放進 `usage`：當下的 `{"enabled", "threshold", "usage"}`。`guardStop()` 只在 `enabled` 為 true 且已知 `usage` >= `threshold` 時停止失敗的 attempt；讀不懂的輸出或 `enabled: false` 永不停止，所以使用者在 run 中途切換開關或改門檻，下一次檢查就生效。router 看最新 attempt 完整內容（最後 200 行 verify output）與較早 summary。worst case 為 14 agent calls。`raise_effort` 是同 tier 較高 effort，`raise_model` 是 next tier，`stop_environment` 是 missing dependency/broken setup/unreachable service，`stop_unclear` 是 ambiguous task。worker 的 `status: "blocked"` 是 failure，進 diagnosis。
+- Claude 依序使用 `preflight.mjs`、路由 Workflow、`claim.mjs`、執行 Workflow 與 `finish.mjs`。
+- Codex 在 `codex-run.mjs` 內負責相同階段。
+- 必須有既有檢查或明確的使用者驗收條件，router 不得自創檢查或核准。
+- 修改測試需使用者要求，結果通過驗證後才套用。
+- 一般重試從原始 snapshot 開始，只帶入前次摘要與提示，不延續失敗程式。
 
-## Finish、brief 與保護
+## 設定與角色指示
 
-Finish 從 stdin 讀 workflow result 或 abort reason/error。`VERIFIED` 時 stage winning worktree、`git write-tree`、以 `git diff --binary baseTree resultTree` 套用 working tree，與 `baseTree` diff 可排除使用者變更。`commit` true 時只以 `model-ladder: <goal>` 提交 patch files。patch conflict（使用者或另一個 run 改了同樣的檔案）時保留 worktree 與 `runs/<runId>/result.patch` 並回報。移除本 run worktrees 和 `worktree-wf_*` branches（哪些算本 run 見「同時執行」），`keepFailed` 時保留 failed ones，然後刪本 run 的鎖/state/setup patch、append 含 `runId` 與 `kept` 的 history、print report。
+設定順序為預設值、個人檔、專案檔，`usageGuard` 逐欄合併。
+個人檔為 `~/.claude/model-ladder.json` 與 `~/.codex/model-ladder.json`，完整選項見[進階設定](USAGE.zh-TW.md#進階設定)。
+Claude 外掛的 `worker_skills`、`verifier_skills` 併入個人層，專案同名鍵可覆蓋，空字串也算覆蓋。
 
-`USAGE_LIMIT`（guard 或硬上限）保留最後一次有回報的 attempt worktree；因為被上限打斷的 worker 不會回報路徑，也保留本 run 在 `.claude/worktrees/` 下未回報的 worktree，不當成孤兒刪除，最後一次 attempt 沒回報路徑時交接檔指向它。`USAGE_LIMIT` 也會寫模板版 `HANDOFF.md`（task、attempts、狀態、worktree、續跑命令），這是程式產生的權威紀錄，也是備案。模板缺少只有主 session 知道的內容（使用者偏好、決定、下一步），所以 `skills/run/SKILL.md` 要求主 session 之後根據完整對話、用使用者的語言改寫：先是 AI 撰寫的區段（`Goal`、`User preferences and decisions`、`Done and not done`、`Suggested next steps`、`How to resume`），再接 `Appendix: program-generated verification (authoritative)`，內容為原封不動貼上的模板。兩部分明確標示，讀者不會把 AI 的說法當成驗證結果；兩者不一致時以附錄為準。`/model-ladder:handoff`（`skills/handoff/SKILL.md`）可隨時手動做同樣的事：`finish.mjs --handoff` 先從 `history.jsonl` 最後一筆重產模板，再由 session 改寫。band 的 `handoff now` 按鈕先寫自己的模板（可包含執行中的列），再呼叫 `$.prompt.submit({ text: '/model-ladder:handoff', asUser: true })`，mod API 會在 session 閒置後以一個 turn 執行；提交失敗時 toast 會提示該命令。Codex 依 `codex-skills/model-ladder/SKILL.md` 走同樣流程（模板來自 runner 或 `watch.mjs --handoff`）；Codex 已撞到硬上限、無法再呼叫模型時，保留模板版。
+角色指示原樣傳遞，只選用可用能力，不得覆寫權限、保護路徑、驗證或禁止遞迴的規則。
+主 session 提醒缺少的能力但不改設定，最終報告列出各角色 blocker。
+`usageGuard.enabled` 只由使用者明確操作改變，門檻修改只寫個人欄位且保留開關。
+專案覆寫仍有效，guard 變更不會使 Codex checkpoint 失效。
 
-可用性檢查：preflight 之後、workflow（Claude）或 runner（Codex）之前，主 session 會把 `worker_skills`／`verifier_skills` 提到的 skill、plugin、MCP server 與自己可用的能力比對，對不可用者提醒使用者，但不中止 run。這是盡力而為的模型判斷，不是 parser，也不會修改設定。各角色回報的能力 blocker 會在最終報告中再列出。
+## 升級規則
 
-Brief 有 GOAL、TASK、SCOPE、ACCEPTANCE、VERIFY、FORBIDDEN、SETUP、PREVIOUS、HINT、REPORT `worktreePath`。test task 用 `test-writer`，其餘用 `worker`，只在 test protection 不同。hook 依 `agent_type` 區分，鎖在 router 決定 `allowTests` 前寫一次。
+| 移動 | 規則 |
+|---|---|
+| 提高 effort | 同 tier，受 `maxEffortJump` 限制。 |
+| 提升模型 | 只到下一 tier，可選其合法 effort。 |
+| Router 選擇無效 | 下一個 effort，否則下一 tier 的最低 effort。 |
+| 環境問題或任務不清 | 停止並回報阻礙。 |
 
-```text
-tests (worker only)  **/test_*.py **/*_test.py **/tests/** **/__tests__/** **/*.test.* **/*.spec.* **/src/test/**
-always               .claude/model-ladder.json, plus config "protected"
-```
+`legalMoves`、`pickMove` 來自共用產生規則，測試會檢查是否偏離來源。
+Worker 死亡或輸出無效算該步驟失敗，診斷失敗使用預設合法移動。
+Codex 的認證、模型存取與 sandbox 錯誤直接停止，不升級重試。
 
-ladder config 永遠受保護。Hook（`guard.mjs`、PreToolUse、early、best effort）僅在 ladder worker/test-writer、至少有一個 run 鎖、path 符合所有鎖合併後的 pattern 時 exit 2 阻擋。Node 缺失則 fails open，run 外不阻擋使用者。Verifier diff 永遠用同 globs 查 worktree 的 `git status --porcelain --untracked-files=all`，也可捕捉 Bash edits；忽略 `__pycache__`、`*.pyc`、`.pytest_cache`、`node_modules`、`target`、`build`、`dist`、`coverage`。Codex 另保護 npm scripts（含 nested manifests）、npm config、selected verify skill dir、selected build manifests，比較 verify 前後 Git trees。新 `dist`、`build`、`target` files 不列入，baseline tree 已有檔仍檢查。
+## 隔離與並行執行
 
-## Report、release、Codex
+| 機制 | 保證 |
+|---|---|
+| 暫存 Git index | Snapshot 包含已提交、dirty 與未追蹤輸入，不改使用者 index。 |
+| `baseTree` 差異 | 只套用該次嘗試的變更，保留原始 snapshot。 |
+| 各 run 鎖 | 記錄 ID、runtime、程序、保護規則與認領範圍。 |
+| 範圍 registry mutex | 阻止重疊認領同時通過。 |
+| 套用 mutex | 序列化套用、commit、dirty 檢查與 snapshot。 |
+| 衝突結果 | 無法套用時保留 patch 與 worktree。 |
+| Worktree 所有權 | 只清理該 run 產物，保留需要的草稿。 |
 
-FAILED/STOPPED report 以 router explanation 結尾。tokens 是每 agent call 的 output tokens（`budget.spent()` delta）；input tokens、main session、dollars 不可得。`.model-ladder/history.jsonl` 每 run 一行，含 task、status、start、attempt cell/result/reason/action/tokens、applied、committed。scripts 的 report 是給呼叫端 session 的輸入，由它以使用者在 session 使用的語言統整成一份摘要（狀態、變更檔案、驗證、限制與待辦），技術名詞保留原文。Claude Code 僅在 `.claude-plugin/plugin.json` 的 `version` 改變時提示更新。`scripts/update-check.mjs` 每日最多讀一次 published `plugin.json`，快取於 OS temp dir，finish append update line；失敗靜默，`MODEL_LADDER_NO_UPDATE_CHECK=1` 關閉，沒有資料送出。CI 的 `.github/scripts/check-version.mjs` 在 plugin dirs 自最新 `v*` tag 後改動未 bump version 時失敗，docs-only 不需 bump。release 要同步 manifests version、bump、`CHANGELOG.md` entry、`vX.Y.Z` tag、GitHub Release。
+範圍以保守的正規化路徑前綴判斷，空值、無效範圍或純萬用字元視為整個 repo。
+唯讀 run 不認領修改範圍，尚未認領的 run 在認領時再比對。
+程序死亡或鎖不可讀視為過期，Claude 鎖沒有長駐 PID，當掉後需確認才能清理。
+不可清除存活程序的鎖或其他作用中 run 的 worktree。
+共用 `live.json`、panel、`HANDOFF.md` 由最後寫入者覆蓋，Codex 額度交接另存各 run 的 live 狀態。
 
-`scripts/codex-run.mjs` 處理 route、attempts、verification、diagnosis、incremental patching。它以 argument arrays、stdin、explicit model/effort、strict JSON schemas、ephemeral sessions、read-only 或 workspace-write sandbox 呼叫 native `codex exec`，從不關閉 approvals/sandbox。每 run 用 UUID dir、temporary Git indexes、explicit created-worktrees list。每個 run 先寫自己的鎖 `.model-ladder/runs/<runId>.json`，並在任何 worker 前認領 router 的 scope（見「同時執行」）。dirty changes 需要 consent，read-only 也隔離。run 產物 `codex-<uuid>/`（attempt worktrees、events/stderr logs、schemas/outputs、snapshot indexes、checkpoint、`result.json`、衝突時的 `result.patch`）放在 `artifactDir(root)` = `os.tmpdir()/model-ladder/<canonical repo 路徑 sha256 前 16 hex>/`（`scripts/common.mjs`；大小寫不敏感平台先轉小寫，canonical 讓 git 與 runner 的 worktree 路徑一致）。`.model-ladder/` 只保留 `runs/`、`history.jsonl`、`HANDOFF.md`、`live.json`、`usage.json`。result paths、`resumeRun`、checkpoint 都用 temp dir。取得 lock 後 `pruneRuns` 刪除該處已完成的 run dir 並取消註冊其 worktree，保留 `CONFLICT`、patch、checkpoint、未完成（無 `result.json`）、作用中鎖提到的 run，`keepFailed` 時也保留仍有 attempt 的 run。舊版留在 `.model-ladder/` 的 run dir 不會被清理。Claude Code runner 的暫存 `state.json`、`setup.patch`、temporary index 在 `.model-ladder/runs/<runId>/`，由 finish 刪除。Test command 來自 trusted config 或 deterministic discovery，verify skills 優先。command check 後另一次 Codex invocation 判 semantic acceptance。editing verifier 是 workspace-write，build artifacts 可產生但 inputs re-check；report-only verifier read-only。沒有 check/acceptance 則 `NEEDS_INPUT`。model output schema-validated；model/auth/sandbox failure stop，不升級。Codex 本身的 usage、rate、quota 錯誤（`codex-exec.mjs` 的 `usageLimitFailure`）以 `errorCode: USAGE_LIMIT` 停止，runner 與 guard 一樣寫 `HANDOFF.md`；文字同時符合 auth/sandbox/model pattern 時仍是一般環境錯誤。入口是 task argument、stdin JSON、`--input <file>`（UTF-8，BOM ok）。README 列出 exit codes。DIRECT 需要實際的呼叫端 context 資料，回傳隔離草稿，以 directRun 與 directSummary 交回獨立驗證後才套用。commit: true 選用提交已驗證檔案；有原有或同時修改的檔案不提交。
+## 保護輸入
 
-`timeoutMs` 是 idle time。SIGINT/SIGTERM/timeout 停 children 並釋放該 run 的鎖，interrupted worker/verifier 保留 draft worktree、checkpoint、`resumeRun`。resume 檢查 commit、dirty snapshot、task、acceptance、config，從 draft fresh worktree re-verify。skill 最多自動 resume timeout 兩次。Guard 在每個 role/verify command 前讀最新 local session 未過期 rate-limit windows，reloading settings；threshold 時回傳含 `errorCode: USAGE_LIMIT`、`handoffPath`、可選 checkpoint 的 `STOPPED`。最高 percentage 計算。`.model-ladder/live.json` atomic replace 為 `{ runId, updatedAt, agents: [{ phase, model, effort, task, startedAt, endedAt, pass }], usage: { fiveHour, sevenDay } }`。ISO strings，active rows 的 `endedAt`/`pass` 為 null，只保存 latest run，SIGKILL 可留 stale active rows。`watch.mjs` 每秒 refresh，10 秒後移除 completed rows，依 cell width 截 task（CJK/emoji aware），sanitize control chars，redirect 時 append frames。300/10080 minutes window 才標 5h/7d，否則 `?`。`--guard`/`--threshold` atomic 更新使用者檔 `~/.codex/model-ladder.json` 並保留其他 fields，不寫專案檔。
+| 層次 | 檢查 |
+|---|---|
+| Claude PreToolUse hook | 有 run 鎖時提前阻擋 worker 修改受保護路徑。 |
+| Verifier diff | 檢查實際 tracked、untracked 變更，包括 shell 修改。 |
+| Codex 驗證 | 保護設定、測試、選定驗證 skill、npm script/config 與相關 build manifest。 |
 
-## Session、band、測試與效能比較
+任務未要求修改測試時，測試維持保護；明確指定的 `protected` 路徑一律禁止修改。
+驗證可產生 build artifact，但既有 tracked 輸入仍會檢查。
+Hook 屬提前防護，Node 不可用時放行，最終 diff 檢查仍執行保護。
 
-### 1.1.0 兩端功能對照
+## DIRECT、拆分與續跑
 
-| 功能 | Claude Code | Codex |
-|---|---|---|
-| DIRECT | router 判斷小任務，依宿主 context 比例由對話實作、另派 verifier | 僅使用呼叫端提供的實際 context 數據；對話修改隔離草稿，以 directRun 交回獨立驗證後套用 |
-| commit | finish 依明確設定提交 | apply mutex 內選用提交；受影響檔案有原有或同時修改時跳過，預設關閉 |
-| SPLIT | 預估超時後詢問分段、整體或停止 | 同一 split_minutes 規則；acceptSplit: false 選整體，forceLadder 停用分段與 DIRECT |
-| test-writer／protected tests | 使用者要求測試才放行，明確 protected 仍有效 | 同一權限門檻與測試行為規則，透過 worker prompt 區分；驗證前後檢查保護路徑 |
-| 獨立驗證 | 命令或經同意的 criteria，由另一角色驗證 | 命令、專案 verify skill 或自動探索，加上獨立語意驗證；不杜撰 acceptance |
-| 模型升級 | legalMoves／pickMove 控制合法升級 | 使用相同產生規則與全新重試 worktree；auth／model／sandbox 問題停止而非升級 |
-| autorun | SessionStart 指示及外掛選項 | 信任後的 SessionStart、個人／專案分層與環境開關；內部角色禁止遞迴 |
-| usage guard | preflight／驗證讀最新設定，辨識 hard limit | 角色邊界與子程序執行中輪詢；原生 quota 錯誤也停止其他已註冊 runner |
-| checkpoint／resume | 保留 worktree、handoff，透過 skill 重啟 | 核對 checkpoint、base、task、acceptance、config，從草稿新建 worktree 並重新驗證；timeout 自動續跑最多兩次 |
-| skill instructions | 原樣自然語言傳給各角色，缺能力回報 | 同一規則；子程序只能使用該宿主實際提供的能力 |
-| 多 run | 共用 scope registry 與 apply mutex | 使用同一 helper；DIRECT 等待對話修改期間不持作用中鎖，交回後重新認領 scope 並核對基線 |
-| handoff | 對話摘要加上原樣保留的程式 appendix | 同樣分開；額度 handoff 使用各 run 的 live snapshot，避免讀到另一 run；共用 HANDOFF.md 仍由最後寫入者覆蓋 |
+| 功能 | 規則 |
+|---|---|
+| DIRECT | 小任務且實測 context 達 `direct_threshold`，路由決定本身不等於通過驗證。 |
+| Claude DIRECT | 主 session 修改後交獨立 verifier，最多三輪修正。 |
+| Codex DIRECT | 呼叫端修改隔離草稿，`directRun` 再認領範圍、核對基線、驗證及套用。 |
+| 拆分 | 超過 `split_minutes` 時，由使用者選依序分段、整體執行或停止。 |
+| 強制 ladder | `forceLadder` 停用 DIRECT 與拆分建議。 |
+| 逾時 | `timeoutMs` 限制沒有輸出的閒置時間。 |
+| Codex 續跑 | 核對 checkout、任務、驗收與設定，再以新 worktree 延續草稿。 |
 
-平台限制：子程序不會取得父對話的私人 context，也不保證具有相同工具。autorun 是指示，不是假設存在的攔截 API。可停止已註冊的 runner process tree，沒有 API 可任意取消 Claude 宿主 session 或 hosted agent。Codex 用 terminal panel 與 JSON 設定替代 Claude 原生 band／設定 UI，沒有自動 context 用量來源。若 Codex 自動探索的測試範圍太大，應明確設定 targeted verify 或使用專案 verify skill。離線 fake 只能證明控制流程，不能證明認證、模型品質、安裝後的宿主分派或即時 UI。
+Codex skill 最多自動續跑逾時兩次，不自動續跑額度停止或取消。
+不假設有自動 Codex context 資料，無法存取草稿時也不可繞過 sandbox。
+選用 commit 排除無關 staged 變更，含既有或並行修改的檔案會跳過，任何 run 都不 push。
 
-Windows sandbox 可能拒絕 `taskkill /T /F`，連測試子程序也無法停止。guard 此時回報錯誤、保留作用中註冊，不寫入錯誤的停止 handoff。程序樹停止必須在既有 sandbox 允許的環境驗證；不可換成只能停止單一 PID 的較弱方式，或加入 bypass flags。可透過該 run 的正常終端中斷控制停止，再檢查紀錄。強制終止可能只留下草稿、沒有 checkpoint；此時檢視草稿並在額度恢復後重啟原始輸入，不能杜撰 resumeRun。
+## 用量停止與交接
 
-`hooks/autorun.mjs` 是兩 runtime default-on SessionStart hook，要求將 git repo 的 top-level task 送 ladder，除非使用者 opts out。router 決定 DIRECT/agents，git 外說明需要 repo 後直接工作，roles 不遞迴開 ladder。它受 user/project instructions 約束。`MODEL_LADDER_AUTORUN=0` 或 `autoRun` 關閉，Codex hook 必須信任。`hooks/band.json` 獨立註冊 band，追蹤 agent events、1 s refresh、completed rows 保留 10 s、10 minutes 時通知一次。handler 寫 `.model-ladder/usage.json`，`usage-statusline.mjs` 是 fallback。Claude 的 guard settings 由 preflight 與每次 attempt 後的 verifier 即時讀取（`usage-guard.mjs`），band controls 只編輯使用者檔 `~/.claude/model-ladder.json`，每次操作只改一個欄位。
+- Claude 在 run 前與失敗嘗試後檢查，Codex 在角色切換與執行中每 2 秒檢查。
+- 額度硬上限與可辨識的純上限訊息會以 `USAGE_LIMIT` 停止，不受 guard 開關影響。
+- 作用中的用量停止也會終止同機其他已註冊 runner 的程序樹。
+- Windows 停止失敗時保留註冊並回報阻礙，不產生錯誤的已停止交接。
+- 已註冊程序的控制不代表有 API 能取消任意 Claude hosted agent。
+- 強制終止的草稿可能沒有 checkpoint，不可杜撰 `resumeRun`。
 
-`worker_skills`/`verifier_skills` 會加至 worker（含 test-writer）與 verifier prompt 的 SKILL INSTRUCTIONS。Claude Code 中它們是 plugin 選項（所有專案的預設），專案可用 `.claude/model-ladder.json` 的同名鍵覆蓋；preflight 合併（必須是字串，否則 `ERROR`）後以 `workflowArgs.skills` 傳給 workflow（見設定）。Codex 在 `.codex/model-ladder.json` 或 `~/.codex/model-ladder.json` 用同 key。band 顯示合併後的值，空值或讀不到時不顯示。nonempty string 原樣傳遞、不解析 commas，仍含 `${` 的值捨棄。角色 model 解讀 conditions、skill-name values，僅在 role scope 內選用可用相關的 skills、plugins、slash commands、MCP tools（名稱可為 skill、plugin 或 MCP server 名）。缺必要能力時報 blocker 並列出已查能力。worker/test-writer/verifier 不設 `tools` allowlist，繼承所有 session 工具（含 MCP）；`disallowedTools: Workflow, Agent` 禁止遞迴與 spawn agent，verifier 內文禁止修改檔案。instructions 不可覆寫 permissions/protected paths/verification rules、讓 verifier fix code 或遞迴 model-ladder。沒有 extra routing call/parser/dependency/config migration。兩 display 都標示 `skill instructions:`，band handoff button 寫 `.model-ladder/HANDOFF.md`。
+`/model-ladder:handoff` 與自動額度交接會寫 `.model-ladder/HANDOFF.md`。
+主 session 在原樣保留的驗證附錄前補上對話情境，附錄仍為權威紀錄。
+無法再呼叫模型時保留模板，手動交接不取消工作。
 
-`node --test tests/unit/*.test.mjs` 是 offline suite，使用 real temporary git repos、scripted fake `agent()`、`tests/helpers/` fake Codex process，涵蓋 `moves`、`flow`、`guard`、`scripts`、`codex*`、`usage-statusline`、`autorun`、`update-check`。最後 full run 是 Linux、Node 22 的 140 passed。`tests/e2e/codex-smoke.mjs` 是 machine-specific real-account test。`node tests/e2e/run.mjs [scenario ...]`（`--dry` 僅 plants/runs pytest）複製 `tests/fixture-repo`、plant problem、以 `claude -p --plugin-dir` 跑 `/model-ladder:run`。11 scenarios 全數 pass，包括 typo、two-files、cheat-bait、add-tests、coupons/cart/shipping、environment、vague/no-verify/dirty，預期是 VERIFIED、STOPPED 或詢問且不執行。
+## 儲存、顯示與平台限制
 
-## 效能比較
+| 項目 | 行為 |
+|---|---|
+| Claude run 檔案 | 鎖與暫存狀態放在 `.model-ladder/runs/`。 |
+| Codex 產物 | `artifactDir(root)` 將 worktree、記錄、checkpoint 與結果放在系統 temp 的 `model-ladder/<repo hash>/`。 |
+| 共用紀錄 | `.model-ladder/` 保存歷史、live、usage、context 與交接。 |
+| 清理 | 保留作用中 run、衝突、保留 patch、checkpoint 與未完成草稿。 |
+| Autorun | SessionStart 指示受使用者與專案規則約束，Codex 須信任 hooks。 |
+| 內部角色 | 關閉遞迴 autorun 與 panel 初始化。 |
+| Claude Band | 事件驅動的任務列、context 量測、保護與交接控制。 |
+| Codex 顯示 | Terminal panel 或 HUD，沒有 Claude 原生 UI 或自動 context 量測。 |
 
-`node tests/e2e/bench.mjs` 為七任務 x 三策略，以 `uv run pytest` passes 且 existing tests untouched 判定。固定 strategies 收到 `do not modify existing tests; run pytest when done`。結果在 `tests/e2e/bench-results.json`，`bench-results.v1.json` 為 orchestration 移至 scripts 前 first run。2026-10-19，每 pair 一次，以 `claude -p` list price：model-ladder v1 為 6/7、$1.92 total、$0.32 per solved、493 s；model-ladder 7/7、$1.28、$0.18、353 s；sonnet / high 7/7、$0.92、$0.13、133 s；opus / xhigh 7/7、$2.20、$0.31、212 s。相較 opus/xhigh 便宜 42%，haiku low/medium 解完七件；相較 sonnet/high 貴 39% 且較慢。因 orchestration 約 one extra session，成本 $0.18-$0.19。main session 約占 v1 80%（ten calls 重讀約 55k tokens），移入 scripts 後約 70%，context size 視 user plugins 而定。large tasks 未量測，single runs 有 noise。
+角色程序不會取得父對話的私人情境，也不能使用子宿主未提供的工具。
+顯示每秒更新，完成列保留 10 秒。
 
-## End-to-end 經驗與 Codex panel parity（1.8）
+## 驗證與發布
 
-run files 放 `.model-ladder/`，因 `.git` 和 `.claude`（headless）不能刪；之後每次 Codex run 的產物（worktree、logs）移到系統 temp dir，不再佔用 repo。pytest 改寫 tracked `.pyc` 曾讓 correct fix 失敗，所以 verifier 忽略 artifact globs。`git add -A -- . ':!.model-ladder'` 在 gitignored path 失敗，先將全部加到 temp index，再 `git rm --cached` own folders。haiku 五次 failed structured output 且 `agent()` throw，throwing agent 是 failed step。無 tests 時 router 曾寫 own assert，因此只允許 pre-existing checks。vague task 曾在 green tests 通過，router 現可先問一題。Windows 經 shell spawn `claude` 會按 spaces 切 task，需 direct spawn 並檢查 question text。
-
-Codex SessionStart hook 提供 persistent PTY watcher 與 desktop terminal visibility 的 setup，明確呼叫 skill 時重複作 fallback。watcher 是 terminal panel，不是 Claude Code UI module，不能顯示在 Codex composer 上方。Codex 管理 hook trust，不可繞過。`autoRun`、`band` 是獨立的分層設定，先讀個人檔，再由專案覆蓋。internal role process 繼承 `MODEL_LADDER_ROLE`，停用 panel/autorun setup 避免 recursion。live state 保存 task、input、role skills、retry state、final result。watcher 顯示與 Claude 相同的 phase lights、rounded reset countdowns，接受 guard/threshold/handoff command 後 Enter。handoff 不中斷 active run。兩 runtime 都有 verification-skill generators/maintainers。Codex 產生 `.agents/skills/verify/`，可使用既有 Claude verification skill。
+- 本機只跑相關測試，CI 執行 `node --test tests/unit/*.test.mjs`。
+- 離線 harness 使用暫存 Git repo 與 fake 模型邊界，只證明控制流程，不代表認證、模型品質或 hosted UI 已通過。
+- 真實帳戶檢查另用 `tests/e2e/codex-smoke.mjs` 與 `tests/e2e/run.mjs`。
+- `scripts/update-check.mjs` 每日快取版本檢查，失敗不打擾使用者，`MODEL_LADDER_NO_UPDATE_CHECK=1` 可停用。
+- 保持外掛名稱與版本一致，同步兩份 changelog，發布 tag 使用 `vX.Y.Z`。
+- CI 要求 release 後的外掛變更提升版本，純文件變更不需提升。
