@@ -6,6 +6,14 @@ Versions follow semantic versioning; Claude Code updates require a new `.claude-
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-10-30
+
+- Shortened plugin settings descriptions, including context-window information in the Band option.
+- Added the installed version to the first configuration label.
+- Simplified both language editions of the README, advanced usage, design notes, and release history.
+- Updated Band examples and moved detailed operation and configuration references to the advanced guides.
+- Removed unreliable performance comparisons and outdated test-result claims, preserving third-party license text.
+
 ## [1.0.1] - 2026-10-30
 
 - Codex DIRECT uses measured caller context and an isolated draft that must pass independent verification before application.

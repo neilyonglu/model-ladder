@@ -1,6 +1,6 @@
 {
   "name": "model-ladder",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Run a coding task on the cheapest model and effort likely to succeed, verify it, and escalate on failure.",
   "author": {
     "name": "usio0108"
@@ -12,7 +12,7 @@
   "userConfig": {
     "autoRun": {
       "type": "boolean",
-      "title": "Use the ladder by default (v1.0.1)",
+      "title": "Use the ladder by default (v1.0.2)",
       "description": "Run coding tasks through the ladder by default.",
       "default": true
     },
