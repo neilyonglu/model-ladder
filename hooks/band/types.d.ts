@@ -12,6 +12,6 @@ export type Row = {
 
 declare module 'claude-code' {
   interface PluginState {
-    'model-ladder': { rows: Row[]; isFolded: boolean; contextText: string }
+    'model-ladder': { rows: Row[]; isFolded: boolean; areSkillsFolded: boolean; contextText: string }
   }
 }

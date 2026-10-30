@@ -90,12 +90,12 @@ For Claude settings outside the plugin screen, use `~/.claude/model-ladder.json`
 
 Project settings in `.claude/model-ladder.json` or `.codex/model-ladder.json` override personal settings; keep usage protection in your personal file unless the project needs an override.
 
-Role instructions can be short natural-language strings, for example:
+Use one rule per line: `project: instructions` matches the main repo folder name exactly, while unprefixed rules apply everywhere.
 
 ```json
 {
-  "worker_skills": "When coding, use ponytail to simplify the code.",
-  "verifier_skills": "Use ponytail to review without changing files."
+  "worker_skills": "model-ladder: use <skills> to simplify code",
+  "verifier_skills": "model-ladder: use <skills> to review without edits"
 }
 ```
 
@@ -107,6 +107,7 @@ The band appears above the Claude Code prompt and requires Claude Code 2.1.290+.
 
 ```text
 ▴ 🟢 model-ladder ── 2h/5h 15% · 3d/7d 44% · ctx 287k/1M (28.7%)
+▸ worker use ponytail when coding
 model/effort        time     task
 haiku-5.5/low       5s       Summarize the README install steps
 [usage guard: on]  threshold [90] %  [handoff now]
@@ -119,7 +120,7 @@ haiku-5.5/low       5s       Summarize the README install steps
 | Status | 🟢 worker or router, 🔵 verifier, 🔴 retrying worker, and `✓` for a finished row. |
 | Task rows | Show the model, effort, elapsed time, and task. |
 | `▴` / `▾` | Collapse or expand the band. |
-| `skill instructions:` | Shows configured role instructions when present, without claiming those skills were invoked. |
+| Instruction arrow | Show only applicable instructions without the `skill instructions:` prefix; expand the single-line preview with `▸` and collapse with `▾`. |
 | `usage guard` | Toggle usage protection. |
 | `threshold` | Set a threshold from 1 to 100%, saved on Enter or after 5 seconds without typing. |
 | `handoff now` | Write the handoff template and submit `/model-ladder:handoff` for the main session to rewrite it without cancelling the run. |

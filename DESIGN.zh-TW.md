@@ -55,8 +55,8 @@ Codex 角色使用明確模型、schema、暫時 session，以及既有 sandbox 
 個人檔為 `~/.claude/model-ladder.json` 與 `~/.codex/model-ladder.json`，完整選項見[進階設定](USAGE.zh-TW.md#進階設定)。
 Claude 外掛的 `worker_skills`、`verifier_skills` 併入個人層，專案同名鍵可覆蓋，空字串也算覆蓋。
 
-角色指示原樣傳遞，只選用可用能力，不得覆寫權限、保護路徑、驗證或禁止遞迴的規則。
-主 session 提醒缺少的能力但不改設定，最終報告列出各角色 blocker。
+共用的 `projectSkills` 在合併設定後比對主 repo 資料夾前綴，保留無前綴的全域規則，執行與顯示前只移除第一個冒號前綴。
+選中的指示保留內容與角色限制，可用性檢查與最終報告只處理適用能力的 blocker。
 `usageGuard.enabled` 只由使用者明確操作改變，門檻修改只寫個人欄位且保留開關。
 專案覆寫仍有效，guard 變更不會使 Codex checkpoint 失效。
 

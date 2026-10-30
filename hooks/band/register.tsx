@@ -5,10 +5,11 @@ import type { Row } from './types'
 import { roundSpan } from './remaining.mjs'
 import { formatContext } from './context.mjs'
 import { addRow, anyRunning, finishRow, isRedo, removeRow, runCount } from './rows.mjs'
-import { GUARD_DEFAULT, mergeConfig, parseThreshold, pluginLayer, projectPins, setGuard, userConfigPath } from '../config-layers.mjs'
+import { GUARD_DEFAULT, mergeConfig, parseThreshold, pluginLayer, projectPins, projectSkills, setGuard, userConfigPath } from '../config-layers.mjs'
 
 const rows = atom({ plugin: 'model-ladder', key: 'rows' } as const, [])
 const isFolded = atom({ plugin: 'model-ladder', key: 'isFolded' } as const, false)
+const areSkillsFolded = atom({ plugin: 'model-ladder', key: 'areSkillsFolded' } as const, true)
 // Latest context window usage from session.measure as shown text ("ctx 35k/1M"); empty when unknown.
 const contextText = atom({ plugin: 'model-ladder', key: 'contextText' } as const, '')
 
@@ -227,10 +228,15 @@ export const register: Register = (on, options) => {
     }
 
     const project = await readJson($, await projectPath($))
-    const config = mergeConfig(BAND_DEFAULTS, { ...(await readJson($, await userPath($))), ...pluginLayer(options) }, project)
+    const config = projectSkills(
+      mergeConfig(BAND_DEFAULTS, { ...(await readJson($, await userPath($))), ...pluginLayer(options) }, project),
+      (await $.session.repo())?.root,
+    )
     // Show the instructions in effect here (project key, else plugin option), not a claim that every mentioned skill was invoked.
     const skill = (role: string, value: unknown) => typeof value === 'string' && value.trim() ? `${role} ${value}` : null
     const withs = [skill('worker', config.worker_skills), skill('verifier', config.verifier_skills)].filter(Boolean)
+    const skillText = withs.join(' · ')
+    const skillsFolded = await read($, areSkillsFolded)
     const handoff = async () => {
       const dir = `${await $.session.cwd()}/.model-ladder`
       let last = null
@@ -290,7 +296,15 @@ export const register: Register = (on, options) => {
           <Text bold> model-ladder </Text>
           <Text dimColor>── {usageLine || 'usage unknown'}{running.length ? '' : ' · idle'}</Text>
         </Box>
-        {withs.length > 0 && <Text dimColor>skill instructions: {withs.join(' · ')}</Text>}
+        {withs.length > 0 && (
+          <Box flexWrap="nowrap">
+            <Button key="skills-fold" plain dimColor label={skillsFolded ? '▸' : '▾'}
+              onPress={() => update($, areSkillsFolded, (v) => !v)} />
+            <Box flexGrow={1} flexShrink={1} minWidth={0}>
+              <Text dimColor wrap={skillsFolded ? 'truncate-end' : undefined}>{skillsFolded ? skillText.replace(/\s+/g, ' ') : skillText}</Text>
+            </Box>
+          </Box>
+        )}
         {shown.length > 0 && row('head', 'model/effort', 'time', 'task', true)}
         {shown.map((r) => row(r.id, r.cell, elapsed(r), e.surface === 'terminal' ? clip(tag(r) + r.task, taskCols) : tag(r) + r.task))}
         <Box>

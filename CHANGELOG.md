@@ -6,6 +6,12 @@ Versions follow semantic versioning; Claude Code updates require a new `.claude-
 
 ## [Unreleased]
 
+## [1.0.3] - 2026-10-30
+
+- Scope role instructions with `project: instructions`, while unprefixed lines remain global.
+- Show only applicable instruction text in the Band, with a collapsible single-line preview and no `skill instructions:` label.
+- Apply the same project selection in Claude Code, Codex, and linked worktrees.
+
 ## [1.0.2] - 2026-10-30
 
 - Shortened plugin settings descriptions, including context-window information in the Band option.

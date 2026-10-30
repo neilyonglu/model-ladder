@@ -121,10 +121,10 @@ Without explicit `verify`, Codex prefers a project verify skill, then discovers 
 | `MODEL_LADDER_NO_UPDATE_CHECK=1` | Disable version checks. |
 
 Claude plugin role instructions provide defaults that project keys override, including an explicit empty string.
-Instructions must be strings; empty values and unresolved `${...}` placeholders add no instructions.
-They can name skills, plugins, slash commands, or MCP servers, but cannot expand role permissions or allow verifier edits or recursive ladder calls.
+Use one rule per line: `model-ladder: use plugin:skill` applies only when the main repo folder is exactly `model-ladder`; lines without a colon apply globally.
+The first colon separates the project name; matching bodies retain later colons, and empty or unresolved `${...}` values add no instructions.
 Unavailable capabilities are reported before execution and in the final report, for example: `ponytail` is not available in this project.
-The `skill instructions:` line displays configured text rather than proof of invocation.
+Role instructions may name skills, plugins, slash commands, or MCP servers, but cannot expand permissions, permit verifier edits, or recurse into the ladder.
 
 ## Band and panel details
 
@@ -136,6 +136,7 @@ Basic fields and controls are shown in the [README](README.md#band-claude-code).
 | Codex context | No automatic source exists; never invent numbers to enable DIRECT. |
 | Guard controls | Save only the changed field to personal settings; project overrides remain effective. |
 | Threshold | Enter or 5 seconds without typing saves it without changing the guard switch. |
+| Instructions | Only matching and global rules appear, without a label prefix; the Band previews one line and its arrow expands or collapses the text. |
 | Claude handoff | `handoff now` writes a template, then submits `/model-ladder:handoff` when the session is idle. |
 | Handoff fallback | If submission fails, a toast gives the command; the template remains available. |
 | Codex controls | Enter `g`, `t 90`, `h`, or `q`, followed by Enter. |

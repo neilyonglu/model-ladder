@@ -39,6 +39,21 @@ export function pluginLayer(options = {}) {
   return layer
 }
 
+// One rule per line: project: instruction. Unprefixed lines remain global.
+export function projectSkills(config, root) {
+  const project = root?.replace(/[\\/]+$/, '').split(/[\\/]/).at(-1)
+  const skills = {}
+  for (const key of ['worker_skills', 'verifier_skills']) {
+    if (typeof config[key] !== 'string') continue
+    skills[key] = config[key].split(/\r?\n/).flatMap((line) => {
+      const colon = line.indexOf(':')
+      if (colon < 0) return [line]
+      return line.slice(0, colon).trim() === project ? [line.slice(colon + 1).trimStart()] : []
+    }).join('\n')
+  }
+  return { ...config, ...skills }
+}
+
 // The only edits anything makes to usageGuard, each one a person's explicit action (band switch or threshold,
 // watch.mjs g / t / --guard / --threshold). Each changes one field of the user's file and keeps the rest.
 export const setGuard = (user, patch) => ({ ...user, usageGuard: { ...user.usageGuard, ...patch } })

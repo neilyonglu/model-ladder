@@ -67,7 +67,7 @@ export function renderLive(state, { width = 80, now = Date.now(), guard = { enab
     lines.push(prefix + truncate(`${agent.phase}: ${agent.task}`, Math.max(0, width - displayWidth(prefix))))
   }
   const withs = Object.entries(state?.skills ?? {}).filter(([, skills]) => skills?.trim()).map(([role, skills]) => `${role} ${skills}`)
-  if (withs.length) lines.push(`skill instructions: ${withs.join(' · ')}`)
+  if (withs.length) lines.push(withs.join(' · '))
   lines.push(`[usage guard: ${guard.enabled ? 'on' : 'off'}]${guard.enabled ? `  threshold ${guard.threshold}%` : ''}`)
   return lines.map((line) => truncate(line, width)).join('\n')
 }

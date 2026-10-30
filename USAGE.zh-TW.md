@@ -121,10 +121,10 @@ Claude 外掛選單提供 DIRECT 門檻 20–80，以及拆分門檻 10、20、3
 | `MODEL_LADDER_NO_UPDATE_CHECK=1` | 停用版本檢查。 |
 
 Claude 外掛角色指示作為預設，專案同名鍵可覆蓋，空字串也算覆蓋。
-指示必須為字串，空值與未解析的 `${...}` 不加入說明。
-可指定 skills、plugins、slash commands 或 MCP server，但不能擴大角色權限、允許 verifier 修改或遞迴呼叫 ladder。
+每行一條規則，`model-ladder: use plugin:skill` 只在主 repo 資料夾名稱完全等於 `model-ladder` 時生效，無冒號的行全域適用。
+第一個冒號分隔專案名稱，符合的內容保留後續冒號，空值與未解析的 `${...}` 不加入說明。
 缺少能力時會在執行前及最終報告提醒，例如：`ponytail` 在這個專案無法使用。
-`skill instructions:` 顯示的是設定文字，不代表已實際呼叫。
+角色指示可指定 skills、plugins、slash commands 或 MCP server，但不能擴大權限、允許 verifier 修改或遞迴呼叫 ladder。
 
 ## Band 與 panel 詳細說明
 
@@ -136,6 +136,7 @@ Claude 外掛角色指示作為預設，專案同名鍵可覆蓋，空字串也�
 | Codex context | 沒有自動資料來源，不可杜撰數值來啟用 DIRECT。 |
 | 保護控制 | 只儲存修改的個人設定欄位，專案覆寫仍有效。 |
 | 門檻 | 按 Enter 或停止輸入 5 秒後儲存，不會改變保護開關。 |
+| 角色指示 | 只顯示符合專案與全域的規則且不加前綴，Band 預設預覽一行，點箭頭可展開或收合。 |
 | Claude 交接 | `handoff now` 先寫模板，再於 session 閒置時提交 `/model-ladder:handoff`。 |
 | 交接備案 | 提交失敗時 toast 顯示指令，模板仍可使用。 |
 | Codex 控制 | 輸入 `g`、`t 90`、`h` 或 `q` 後按 Enter。 |

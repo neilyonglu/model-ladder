@@ -55,8 +55,8 @@ Settings resolve as defaults, personal file, then project file, with `usageGuard
 Personal files are `~/.claude/model-ladder.json` and `~/.codex/model-ladder.json`; full options are in [advanced settings](USAGE.md#advanced-settings).
 Claude plugin `worker_skills` and `verifier_skills` values join the personal layer; project values override them, including empty strings.
 
-Role instructions pass through intact, select only available capabilities, and cannot override permissions, protected paths, verification, or the no-recursion rule.
-The session warns about missing capabilities without changing settings, and final reports include role blockers.
+Shared `projectSkills` filtering selects exact main-repo folder prefixes after merging, retains unprefixed global lines, and strips only the first colon prefix before execution and display.
+Selected instructions retain their bodies and role restrictions; availability checks and final reports include only applicable capability blockers.
 Only explicit user actions change `usageGuard.enabled`; threshold edits preserve the switch and write only the personal field.
 Project overrides remain effective, and guard changes do not invalidate Codex resume checkpoints.
 

@@ -1,11 +1,13 @@
 import { freshUserConfig } from '../helpers/isolate-home.mjs'
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { after, test } from 'node:test'
 import { fileURLToPath } from 'node:url'
-import { GUARD_DEFAULT, mergeConfig, parseThreshold, pluginLayer, projectPins, setGuard, userConfigPath } from '../../hooks/config-layers.mjs'
+import { GUARD_DEFAULT, mergeConfig, parseThreshold, pluginLayer, projectPins, projectSkills, setGuard, userConfigPath } from '../../hooks/config-layers.mjs'
+import { artifactDir } from '../../scripts/common.mjs'
 import { loadLayered, userConfigPath as nodeUserConfigPath, writeUserGuard } from '../../scripts/config.mjs'
 import { DEFAULTS as CLAUDE_DEFAULTS, loadConfig as loadClaude } from '../../scripts/preflight.mjs'
 import { DEFAULTS as CODEX_DEFAULTS, loadConfig as loadCodex } from '../../scripts/codex-run.mjs'
@@ -15,7 +17,9 @@ const root = fileURLToPath(new URL('../../', import.meta.url))
 const dirs = []
 after(() => dirs.forEach((d) => rmSync(d, { recursive: true, force: true })))
 const tmp = () => {
-  const d = mkdtempSync(join(tmpdir(), 'ml-config-'))
+  const base = artifactDir(root)
+  mkdirSync(base, { recursive: true })
+  const d = mkdtempSync(join(base, 'config-'))
   dirs.push(d)
   return d
 }
@@ -57,6 +61,48 @@ test('plugin skill options: only filled-in strings count', () => {
   assert.deepEqual(pluginLayer({ worker_skills: 'use ponytail', verifier_skills: '${user_config.verifier_skills}', band: true }), { worker_skills: 'use ponytail' })
   assert.deepEqual(pluginLayer({ worker_skills: '', verifier_skills: 3 }), { worker_skills: '' })
   assert.deepEqual(pluginLayer(undefined), {})
+})
+
+test('project instructions select exact repo names and preserve unprefixed rules and body colons', () => {
+  const config = {
+    worker_skills: 'Global rule\r\nother: Do not use\r\nmodel-ladder: use plugin:skill at https://example.com',
+    verifier_skills: 'other: Do not review',
+  }
+  assert.deepEqual(projectSkills(config, 'C:\\repos\\model-ladder\\'), {
+    worker_skills: 'Global rule\nuse plugin:skill at https://example.com', verifier_skills: '',
+  })
+  assert.equal(projectSkills(config, '/repos/model').worker_skills, 'Global rule', 'no partial matches')
+  assert.equal(projectSkills(config, undefined).worker_skills, 'Global rule', 'unknown repo gets no scoped instructions')
+  assert.equal(projectSkills({ worker_skills: 3 }, '/repos/model-ladder').worker_skills, 3, 'invalid types still reach validation')
+})
+
+test('both runtimes filter merged instructions using the main repo name, including linked worktrees', () => {
+  const user = freshUserConfig()
+  const repo = tmp()
+  const draft = join(tmp(), 'draft')
+  const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8', stdio: 'pipe' })
+  const name = basename(repo)
+  writeJson(join(repo, 'example.json'), {})
+  git('init', '-q')
+  git('add', '.')
+  git('-c', 'user.name=test', '-c', 'user.email=test@example.com', 'commit', '-qm', 'fixture')
+  git('worktree', 'add', '-q', '-b', 'draft', draft)
+  try {
+    writeJson(user, { worker_skills: `${name}: use ponytail\nother: skip`, verifier_skills: 'review globally' })
+    for (const dir of [repo, draft]) {
+      assert.equal(loadClaude(dir).config.worker_skills, 'use ponytail')
+      assert.equal(loadCodex(dir).worker_skills, 'use ponytail')
+      assert.equal(loadCodex(dir).verifier_skills, 'review globally')
+    }
+    assert.equal(loadClaude(repo, { worker_skills: `${name}: plugin rule` }).config.worker_skills, 'plugin rule')
+    writeJson(join(repo, '.claude/model-ladder.json'), { worker_skills: 'other: skip' })
+    assert.equal(loadClaude(repo, { worker_skills: `${name}: plugin rule` }).config.worker_skills, '', 'project override applies before filtering')
+    writeJson(join(repo, '.codex/model-ladder.json'), { worker_skills: '' })
+    assert.equal(loadCodex(repo).worker_skills, '', 'empty project override still wins')
+  } finally {
+    git('worktree', 'remove', '--force', draft)
+    freshUserConfig()
+  }
 })
 
 test('band threshold save changes the threshold only: an off guard stays off', () => {

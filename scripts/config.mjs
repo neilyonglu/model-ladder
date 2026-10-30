@@ -3,8 +3,9 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { CONFIG_FILE, mergeConfig, pluginLayer, setGuard, userConfigPath as pathFor } from '../hooks/config-layers.mjs'
+import { CONFIG_FILE, mergeConfig, pluginLayer, projectSkills, setGuard, userConfigPath as pathFor } from '../hooks/config-layers.mjs'
 import { atomicJson } from './codex-live.mjs'
+import { worktrees } from './common.mjs'
 
 export const userConfigPath = (runtime, env = process.env) => pathFor(runtime, env, homedir())
 export const projectConfigPath = (root, runtime) => join(root, runtime === 'codex' ? '.codex' : '.claude', CONFIG_FILE)
@@ -24,7 +25,12 @@ export function readLayers(root, runtime) {
 // defaults -> user file (+ Claude Code plugin options) -> project file. Read fresh on every call.
 export function loadLayered(root, runtime, defaults, pluginOptions = {}) {
   const { user, project } = readLayers(root, runtime)
-  return mergeConfig(defaults, { ...user, ...pluginLayer(pluginOptions) }, project)
+  const config = mergeConfig(defaults, { ...user, ...pluginLayer(pluginOptions) }, project)
+  let projectRoot = root
+  if (['worker_skills', 'verifier_skills'].some((key) => typeof config[key] === 'string' && config[key].includes(':'))) {
+    try { projectRoot = worktrees(root)[0]?.path ?? root } catch { /* not a Git repository */ }
+  }
+  return projectSkills(config, projectRoot)
 }
 
 // A person's explicit guard change: one field of the user's file, nothing else, never the project file.

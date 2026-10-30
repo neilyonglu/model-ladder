@@ -6,6 +6,12 @@
 
 ## [Unreleased]
 
+## [1.0.3] - 2026-10-30
+
+- 支援 `專案名稱: 指示` 限定角色指示，無前綴的行維持全域適用。
+- Band 只顯示適用指示，移除 `skill instructions:` 標籤，並提供可收合的單行預覽。
+- Claude Code、Codex 與 linked worktree 使用相同專案比對規則。
+
 ## [1.0.2] - 2026-10-30
 
 - 精簡外掛設定註解，並在 Band 選項補上 context window 說明。

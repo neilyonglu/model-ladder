@@ -41,7 +41,7 @@ For each name you cannot find, tell the user once, before the workflow call, in 
 
 Call the Workflow tool with name `model-ladder:ladder` and args `{ "task": "<task>", "contextTokens": <estimate>, "contextWindow": <window>, "forceLadder": <bool>, ...workflowArgs }` (a JSON object, not a string). Pass `workflowArgs` unchanged.
 
-- `workflowArgs.skills`: the natural-language skill instructions per role in effect here: `worker_skills` and `verifier_skills` from the project's `.claude/model-ladder.json` when it has them, else the plugin options. Preflight merged them; do not edit, add or drop them. Empty means none.
+- `workflowArgs.skills`: the effective role instructions after merging settings and selecting matching `project: instructions` lines by the main repo folder name, plus unprefixed global lines. Preflight removed project prefixes; do not edit, add or drop instructions. Empty means none.
 - `workflowArgs.usageGuard`: the command the verifier runs to read the usage guard as the user has set it right now. Pass it unchanged, whether the guard is on or off.
 
 - If `workflowArgs` already has `contextTokens` and `contextWindow`, they are the band's measured values: use them and do not estimate. `...workflowArgs` comes last in the args, so they override anything you put before it. Estimate only the ones it lacks.

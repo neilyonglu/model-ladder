@@ -1,6 +1,6 @@
 {
   "name": "model-ladder",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Run a coding task on the cheapest model and effort likely to succeed, verify it, and escalate on failure.",
   "author": {
     "name": "usio0108"
@@ -12,7 +12,7 @@
   "userConfig": {
     "autoRun": {
       "type": "boolean",
-      "title": "Use the ladder by default (v1.0.2)",
+      "title": "Use the ladder by default (v1.0.3)",
       "description": "Run coding tasks through the ladder by default.",
       "default": true
     },
@@ -25,13 +25,13 @@
     "worker_skills": {
       "type": "string",
       "title": "Worker skill instructions",
-      "description": "Skills or tools for workers. Empty = none.",
+      "description": "Use project: instructions; no prefix applies to all projects.",
       "default": ""
     },
     "verifier_skills": {
       "type": "string",
       "title": "Verifier skill instructions",
-      "description": "Skills or tools for review only. Empty = none.",
+      "description": "Use project: instructions; no prefix applies to all projects.",
       "default": ""
     },
     "direct_threshold": {

@@ -84,12 +84,12 @@ Claude 若需在外掛介面以外設定，使用 `~/.claude/model-ladder.json`�
 
 專案的 `.claude/model-ladder.json` 或 `.codex/model-ladder.json` 優先於個人設定，使用量保護建議放個人檔，除非專案需要覆寫。
 
-角色指示可用簡短的自然語言，例如：
+角色指示每行一條，`專案名稱: 指示` 只套用主 repo 資料夾名稱完全一致的專案，無前綴則全域適用。
 
 ```json
 {
-  "worker_skills": "寫程式時，使用 <skills> 簡化程式碼。",
-  "verifier_skills": "使用 <skills> 審查，不修改檔案。"
+  "worker_skills": "model-ladder: 寫程式時使用 <skills> 簡化程式碼。",
+  "verifier_skills": "model-ladder: 使用 <skills> 審查，不修改檔案。"
 }
 ```
 
@@ -101,6 +101,7 @@ Band 顯示在 Claude Code 的 prompt 上方，需要 Claude Code 2.1.290+。
 
 ```text
 ▴ 🟢 model-ladder ── 2h/5h 15% · 3d/7d 44% · ctx 287k/1M (28.7%)
+▸ worker use ponytail when coding
 model/effort        time     task
 haiku-5.5/low       5s       Summarize the README install steps
 [usage guard: on]  threshold [90] %  [handoff now]
@@ -113,7 +114,7 @@ haiku-5.5/low       5s       Summarize the README install steps
 | 狀態 | 🟢 worker 或 router、🔵 verifier、🔴 重試中的 worker，任務列的 `✓` 表示已結束。 |
 | 任務列 | 顯示模型、effort、耗時與任務。 |
 | `▴` / `▾` | 收合或展開 Band。 |
-| `skill instructions:` | 有設定時顯示角色指示，不代表已呼叫其中的 skills。 |
+| 指示箭頭 | 只顯示生效指示且不加 `skill instructions:` 前綴，預設收成一行，以 `▸` 展開、`▾` 收合。 |
 | `usage guard` | 開關使用量保護。 |
 | `threshold` | 設定 1–100% 門檻，按 Enter 或停止輸入 5 秒後儲存。 |
 | `handoff now` | 寫入交接模板並提交 `/model-ladder:handoff`，讓主 session 改寫，不取消目前 run。 |

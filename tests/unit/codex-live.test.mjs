@@ -69,7 +69,8 @@ test('panel shows phase lights, reset countdown and skill instructions', () => {
   const agent = { phase: 'worker', model: 'luna', effort: 'low', task: 'fix', startedAt: new Date(now).toISOString(), endedAt: null }
   const state = { agents: [agent], usage: { fiveHour: 15, fiveHourResetsAt: now / 1000 + 16440 }, skills: { worker: 'ponytail' } }
   assert.match(renderLive(state, { now }), /🟢 model-ladder.*5h\/5h 15%/)
-  assert.match(renderLive(state, { now }), /skill instructions: worker ponytail/)
+  assert.match(renderLive(state, { now }), /worker ponytail/)
+  assert.doesNotMatch(renderLive(state, { now }), /skill instructions:/)
   assert.match(renderLive({ ...state, agents: [{ ...agent, retry: true }] }), /🔴/)
   assert.match(renderLive({ ...state, agents: [{ ...agent, phase: 'verify-command' }] }), /🔵/)
 })
