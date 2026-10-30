@@ -88,8 +88,8 @@ Claude 若需在外掛介面以外設定，使用 `~/.claude/model-ladder.json`�
 
 ```json
 {
-  "worker_skills": "寫程式時，使用 ponytail 簡化程式碼。",
-  "verifier_skills": "使用 ponytail 審查，不修改檔案。"
+  "worker_skills": "寫程式時，使用 <skills> 簡化程式碼。",
+  "verifier_skills": "使用 <skills> 審查，不修改檔案。"
 }
 ```
 
